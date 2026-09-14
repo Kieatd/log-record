@@ -22,10 +22,6 @@ window.electronAPI.onGetNetworkMsg((msg) => {
 onMounted(() => {
   appStore.updateCheck()
 })
-
-
-
-
 </script>
 
 <template>

@@ -11,7 +11,15 @@ const logStore = useLogStore();
 const props = defineProps<{ tabId: string }>()
 
 const finallyLoggers = computed(() => {
-  return logStore.currentFilterResults[props.tabId] ?? []
+  const list = logStore.currentFilterResults[props.tabId] ?? [];
+  // vue-virtual-scroller 的 DynamicScroller 用 item.id 作为「每条高度」的缓存 key，
+  // 而 key-field 在库内部硬编码成 "id"，外层传 key-field 没用。
+  // 上报的日志 id 会大量重复（实测 9267 条里 8403 条重复，
+  // 比如 id=1682 连续出现几百次），重复后几千条日志共用同一个高度槽位、
+  // 高度互相覆盖，表现就是：条目错位、每一条之间出现巨大空隙、
+  // 滚动条长度膨胀（实测 40 万像素）。
+  // 所以这里按位置重新编号，保证 key 唯一。列表只追加，位置是稳定的。
+  return list.map((item, index) => ({ ...item, id: `log-${index}` }));
 })
 
 const scrollToBottom = () => {
@@ -42,11 +50,13 @@ const parseText = (text: string) => {
     return text;
   }
 }
-
 </script>
 
 <template>
-  <DynamicScroller :items="finallyLoggers" type-field="level" :min-item-size="54" class="log-container" ref="divRef"
+  <!-- min-item-size 是「未测量条目」的估算高度，直接决定滚动条长度，
+       实测每条就是 38px（a-tag 22px + .item-box 上下 padding 8px×2），
+       原来写 54 会让总高度虚高约 42%，列表越长滚动条越偏 → 改成实测值 38 -->
+  <DynamicScroller :items="finallyLoggers" type-field="level" :min-item-size="38" class="log-container" ref="divRef"
     @scroll="scroll" @wheel="wheel">
     <template v-slot="{ item, active }">
       <DynamicScrollerItem :item="item" :active="active" :size-dependencies="[

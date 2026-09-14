@@ -3,12 +3,12 @@ import {
   handleSingleTextToSelected,
   searchTextToCommandsMap,
 } from '@/utils/log';
-import { defineStore } from 'pinia';
+import { acceptHMRUpdate, defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 
 export type LevelType = 'log' | 'warn' | 'error';
 export type LogType = {
-  id: number;
+  id: number | string;
   text: string;
   createTime: string;
   level: LevelType;
@@ -237,3 +237,8 @@ const useLogStore = defineStore('log', () => {
 });
 
 export default useLogStore;
+
+// 开发期热更新：没有这段，Vite HMR 后渲染进程仍持有旧 store 实例
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useLogStore, import.meta.hot));
+}
