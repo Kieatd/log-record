@@ -4,6 +4,7 @@ import { computed } from 'vue';
 import VueJsonPretty from 'vue-json-pretty';
 import 'vue-json-pretty/lib/styles.css';
 import { message } from 'ant-design-vue';
+import { CopyOutlined } from '@ant-design/icons-vue';
 import { useI18n } from 'vue-i18n';
 import get from 'lodash/get';
 
@@ -32,16 +33,45 @@ const resBody = computed(() => {
   }
 });
 
+// 把任意值整理成可读的纯文本：字符串若为 JSON 则美化，对象则美化输出
+const formatForCopy = (raw: any): string => {
+  if (raw === undefined || raw === null) {
+    return '';
+  }
+  if (typeof raw === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(raw), null, 2);
+    } catch {
+      return raw;
+    }
+  }
+  if (typeof raw === 'object') {
+    try {
+      return JSON.stringify(raw, null, 2);
+    } catch {
+      return String(raw);
+    }
+  }
+  return String(raw);
+};
+
 const copyText = async (text: any) => {
   try {
-    await navigator.clipboard.writeText(
-      typeof text === 'object' ? JSON.stringify(text) : text,
-    );
+    await navigator.clipboard.writeText(formatForCopy(text));
     messageApi.info(i18n.t('复制成功'));
   } catch (err) {
     messageApi.warning(i18n.t('复制失败'));
     console.error('无法复制文本: ', err);
   }
+};
+
+// 一键复制整段请求体 / 响应体（虚拟滚动下无法手动全选，故提供按钮）
+const copyBody = (raw: any) => {
+  const text = formatForCopy(raw);
+  if (!text) {
+    return;
+  }
+  copyText(text);
 };
 
 const onDoubleNodeClick = (root: any) => {
@@ -112,6 +142,19 @@ const onResNodeClick = computed(() => {
           class="body-box"
           v-if="csn.reqBody"
         >
+          <div class="body-toolbar">
+            <a-button
+              class="copy-btn"
+              type="text"
+              size="small"
+              @click="copyBody(csn.reqBody)"
+            >
+              <template #icon>
+                <CopyOutlined />
+              </template>
+              {{ $t('复制') }}
+            </a-button>
+          </div>
           <pre
             v-if="typeof reqBody === 'string'"
             v-html="reqBody"
@@ -170,6 +213,19 @@ const onResNodeClick = computed(() => {
             class="body-box"
             v-if="resBody"
           >
+            <div class="body-toolbar">
+              <a-button
+                class="copy-btn"
+                type="text"
+                size="small"
+                @click="copyBody(csn.resBody)"
+              >
+                <template #icon>
+                  <CopyOutlined />
+                </template>
+                {{ $t('复制') }}
+              </a-button>
+            </div>
             <pre
               v-if="typeof resBody === 'string'"
               v-html="resBody"
@@ -238,6 +294,34 @@ const onResNodeClick = computed(() => {
   border: 1px solid var(--color-scroll);
   border-radius: var(--border-radius-large);
   padding: 10px;
+}
+
+.body-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+
+.copy-btn {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--color-main);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.copy-btn:hover {
+  background-color: rgba(51, 102, 102, 0.1);
+  color: var(--color-main);
+}
+
+/* 允许在请求体/响应体里用鼠标拖选文本（虚拟滚动下仅能选中已渲染部分，
+   需要全量请使用上方“复制”按钮） */
+.body-box,
+.body-box :deep(.vjs-tree) {
+  user-select: text;
 }
 
 .row-container {
