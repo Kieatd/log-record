@@ -1,17 +1,29 @@
 import { SearchFilterType } from '@/types/global';
 import { addUrlToTree } from '@/utils/network';
 import { TreeProps } from 'ant-design-vue';
-import { defineStore } from 'pinia';
+import { acceptHMRUpdate, defineStore } from 'pinia';
 import { ref } from 'vue';
+
+export type NetworkViewMode = 'tree' | 'flat';
 
 const useNetworkStore = defineStore('network', () => {
   const treeData = ref<TreeProps['treeData']>([]);
   const requests = ref<Record<string, any>>({});
   const selectedRequest = ref<Record<string, any>>({});
+  // 左侧列表展示模式：tree = 按路径分组，flat = 平铺列表
+  const viewMode = ref<NetworkViewMode>('tree');
   const searchFilter = ref<SearchFilterType>({
     text: '',
     isCaseSensitive: false,
   });
+
+  const setViewMode = (mode: NetworkViewMode) => {
+    viewMode.value = mode;
+  };
+
+  const toggleViewMode = () => {
+    viewMode.value = viewMode.value === 'tree' ? 'flat' : 'tree';
+  };
 
   const updateTreeData = (msg: any) => {
     let id = msg.requestId;
@@ -81,7 +93,16 @@ const useNetworkStore = defineStore('network', () => {
     searchFilter,
     setSearchFilter,
     requests,
+    viewMode,
+    setViewMode,
+    toggleViewMode,
   };
 });
 
 export default useNetworkStore;
+
+// 开发期热更新：没有这段，Vite HMR 后渲染进程仍持有旧 store 实例，
+// 新加的字段/方法取不到，会导致页面渲染报错（例：undefined.get）。
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useNetworkStore, import.meta.hot));
+}

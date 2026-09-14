@@ -36,6 +36,13 @@ export default {
   解析响应体失败: 'Failed to parse response body',
   '无法复制文本: ': 'Unable to copy text: ',
   '请输入路径或 url': 'Enter path or URL',
+  切换为平铺列表: 'Switch to flat list',
+  切换为路径分组: 'Switch to path grouping',
+  路径显示设置: 'Path display',
+  全选: 'Select all',
+  全不选: 'Clear all',
+  '取消勾选的路径段会从链接中隐藏，最后一段接口名始终保留':
+    'Unchecked path segments are hidden from the URL; the final segment (interface name) is always kept.',
   '请求方法：': 'Request Method:',
   连接说明: 'Connection Instructions',
   '1. 请在需要调试的手机上写上这个 IP 地址：':
