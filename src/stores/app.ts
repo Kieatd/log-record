@@ -1,6 +1,6 @@
 // eslint-disable-next-line import/no-unresolved
 import { UpgradeCheckResult } from '@/utils/update';
-import { defineStore } from 'pinia';
+import { acceptHMRUpdate, defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 
 type ConnectedPhone = {
@@ -89,3 +89,8 @@ const useAppStore = defineStore('app', () => {
 });
 
 export default useAppStore;
+
+// 开发期热更新：没有这段，Vite HMR 后渲染进程仍持有旧 store 实例
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useAppStore, import.meta.hot));
+}
