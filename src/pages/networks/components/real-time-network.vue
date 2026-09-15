@@ -154,6 +154,27 @@ watch(
   { immediate: true },
 );
 
+// 默认隐藏「前两级」路径：域名 + 第一段路径（例：https://xxx 与 api）。
+// 这两级基本不用看，隐藏后链接会短很多，这也是日常最常用的设置。
+// 只在第一次拿到路径树时应用一次，之后完全交给用户自己勾选。
+const defaultPathHiddenApplied = ref(false);
+watch(
+  pathTree,
+  () => {
+    if (defaultPathHiddenApplied.value || !pathTree.value.length) {
+      return;
+    }
+    const keys: string[] = [];
+    pathTree.value.forEach((level1) => {
+      keys.push(level1.key);
+      level1.children?.forEach((level2) => keys.push(level2.key));
+    });
+    hiddenKeys.value = new Set(keys);
+    defaultPathHiddenApplied.value = true;
+  },
+  { immediate: true },
+);
+
 // 树模式搜索时自动展开命中的分支
 watch(filterTreeData, () => {
   if (!debouncedFilter.value.text) {
@@ -168,7 +189,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 
 <template>
   <div class="network-container">
-    <SplitPane :initial-left-width="300" :min-width="200">
+    <SplitPane :initial-left-width="460" :min-width="200">
       <template #left>
         <div class="content content-left">
           <div class="network-record">
@@ -241,7 +262,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
               v-if="networkStore.viewMode === 'flat'"
               trigger="click"
               placement="topRight"
-              :overlay-style="{ width: '340px' }"
+              :overlay-style="{ width: '420px' }"
             >
               <template #title>
                 <div class="path-setting-header">
@@ -265,32 +286,38 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                 </div>
               </template>
               <template #content>
-                <div class="path-setting-tip">
-                  {{
-                    $t(
-                      '取消勾选的路径段会从链接中隐藏，最后一段接口名始终保留',
-                    )
-                  }}
+                <div class="path-setting-body">
+                  <div class="path-setting-tip">
+                    {{
+                      $t(
+                        '取消勾选的路径段会从链接中隐藏，最后一段接口名始终保留',
+                      )
+                    }}
+                  </div>
+                  <!-- 固定高度的滚动区：内容再多也只在这里内部滚动，不会把弹层撑大 -->
+                  <div class="path-setting-scroll">
+                    <a-tree
+                      v-if="pathTree.length"
+                      class="path-setting-tree"
+                      checkable
+                      check-strictly
+                      block-node
+                      :selectable="false"
+                      :tree-data="pathTree"
+                      :checked-keys="pathCheckedKeys"
+                      v-model:expandedKeys="pathExpandedKeys"
+                      @check="onPathCheck"
+                    >
+                      <template #title="{ title, count }">
+                        <span :title="title">
+                          {{ title }}
+                          <span class="path-count">({{ count }})</span>
+                        </span>
+                      </template>
+                    </a-tree>
+                    <div v-else class="path-setting-empty">{{ $t('空') }}</div>
+                  </div>
                 </div>
-                <a-tree
-                  v-if="pathTree.length"
-                  class="path-setting-tree"
-                  checkable
-                  check-strictly
-                  :selectable="false"
-                  :tree-data="pathTree"
-                  :checked-keys="pathCheckedKeys"
-                  v-model:expandedKeys="pathExpandedKeys"
-                  @check="onPathCheck"
-                >
-                  <template #title="{ title, count }">
-                    <span>
-                      {{ title }}
-                      <span class="path-count">({{ count }})</span>
-                    </span>
-                  </template>
-                </a-tree>
-                <div v-else class="path-setting-tip">{{ $t('空') }}</div>
               </template>
               <span class="view-toggle" :title="$t('路径显示设置')">
                 <SettingOutlined />
@@ -310,7 +337,8 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 </template>
 
 <style scoped>
-:deep(.ant-tree-node-content-wrapper) {
+/* 只作用于左侧主列表树，避免 :deep 泄漏到其他 a-tree（例如路径设置弹层） */
+.tree-box :deep(.ant-tree-node-content-wrapper) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -523,21 +551,62 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   color: var(--color-main);
 }
 
+.path-setting-body {
+  display: flex;
+  flex-direction: column;
+  /* 内容不往弹层外面溢，保证弹层尺寸固定 */
+  overflow: hidden;
+}
+
 .path-setting-tip {
+  flex-shrink: 0;
   margin-bottom: 8px;
   font-size: 12px;
   line-height: 1.5;
   opacity: 0.65;
 }
 
-.path-setting-tree {
-  max-height: 320px;
+/* 固定高度的滚动区：显示不下的部分在这里滚动（纵向为主，横向兜底） */
+.path-setting-scroll {
+  height: 300px;
   overflow: auto;
+}
+
+.path-setting-scroll::-webkit-scrollbar {
+  height: 5px;
+  width: 5px;
+}
+
+.path-setting-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--color-scroll);
+  border-radius: var(--border-radius-default);
+}
+
+.path-setting-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-main);
+}
+
+.path-setting-empty {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
+.path-setting-tree {
   font-size: 12px;
 }
 
 .path-setting-tree :deep(.ant-tree-title) {
   font-size: 12px;
+}
+
+/* 长域名/长路径用省略号截断，避免把弹层横向撑开（悬浮看完整内容）。
+   这里只负责截断，flex 交给 a-tree 的 block-node 模式（antd 自带：
+   行容器 align-items:stretch + 标题 flex:auto），否则标题会被压成 0 宽。 */
+.path-setting-scroll :deep(.ant-tree-node-content-wrapper) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .path-count {

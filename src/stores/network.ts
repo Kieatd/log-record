@@ -11,7 +11,8 @@ const useNetworkStore = defineStore('network', () => {
   const requests = ref<Record<string, any>>({});
   const selectedRequest = ref<Record<string, any>>({});
   // 左侧列表展示模式：tree = 按路径分组，flat = 平铺列表
-  const viewMode = ref<NetworkViewMode>('tree');
+  // 默认用平铺（每条接口一行，帶到达序号），更贴近日常看流量
+  const viewMode = ref<NetworkViewMode>('flat');
   const searchFilter = ref<SearchFilterType>({
     text: '',
     isCaseSensitive: false,
