@@ -23,6 +23,8 @@ export default {
   '更新内容：': 'Update content:',
   复制成功: 'Copied successfully',
   复制失败: 'Copy failed',
+  '本机 IP，手机上填这个地址（点击复制）':
+    'Local IP — enter this address on your phone (click to copy)',
   '请求地址：': 'Request URL:',
   '请求时间：': 'Request Time:',
   '请求头：': 'Request Headers:',
