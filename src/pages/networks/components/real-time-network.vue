@@ -11,9 +11,12 @@ import {
   filterDataNodes,
   filterFlatRequests,
   formatShortUrl,
+  fromRelativePathKeys,
+  getDefaultHiddenPathKeys,
   getRequestsByArrival,
   getStatusColor,
   sortTreeLeavesByRecency,
+  toRelativePathKeys,
 } from '@/utils/network';
 import {
   ApartmentOutlined,
@@ -154,26 +157,65 @@ watch(
   { immediate: true },
 );
 
-// 默认隐藏「前两级」路径：域名 + 第一段路径（例：https://xxx 与 api）。
-// 这两级基本不用看，隐藏后链接会短很多，这也是日常最常用的设置。
-// 只在第一次拿到路径树时应用一次，之后完全交给用户自己勾选。
-const defaultPathHiddenApplied = ref(false);
+/* ---- 路径勾选的持久化：下次打开沿用上次的设置 ---- */
+
+// localStorage 的 key，沿用项目已有的 'Log Record$$xxx' 命名
+const PATH_SETTING_STORAGE_KEY = 'Log Record$$hiddenPathSegments';
+
+// 存的是「相对域名」的形式（例：['', '/api']），所以换环境、域名变了也还能用
+const readSavedRelativeKeys = (): string[] | null => {
+  try {
+    const raw = localStorage.getItem(PATH_SETTING_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => typeof item === 'string')
+      : null;
+  } catch (err) {
+    console.warn('读取路径显示设置失败，将使用默认值', err);
+    return null;
+  }
+};
+
+const savedRelativeKeys = readSavedRelativeKeys();
+// 标记「设置已就绪」：就绪前不写回 localStorage，避免用空数据覆盖存档
+const pathSettingReady = ref(false);
+
+// 拿到路径树后初始化一次：优先用存档，没有存档才用默认值（隐藏前两级）
 watch(
   pathTree,
   () => {
-    if (defaultPathHiddenApplied.value || !pathTree.value.length) {
+    if (pathSettingReady.value || !pathTree.value.length) {
       return;
     }
-    const keys: string[] = [];
-    pathTree.value.forEach((level1) => {
-      keys.push(level1.key);
-      level1.children?.forEach((level2) => keys.push(level2.key));
-    });
-    hiddenKeys.value = new Set(keys);
-    defaultPathHiddenApplied.value = true;
+    const roots = pathTree.value.map((node) => node.key);
+    hiddenKeys.value = new Set(
+      savedRelativeKeys
+        ? fromRelativePathKeys(savedRelativeKeys, roots)
+        : getDefaultHiddenPathKeys(pathTree.value),
+    );
+    pathSettingReady.value = true;
   },
   { immediate: true },
 );
+
+// 用户每次勾选都存下来，下次启动沿用
+watch(hiddenKeys, () => {
+  if (!pathSettingReady.value || !pathTree.value.length) {
+    return;
+  }
+  try {
+    const roots = pathTree.value.map((node) => node.key);
+    localStorage.setItem(
+      PATH_SETTING_STORAGE_KEY,
+      JSON.stringify(toRelativePathKeys(hiddenKeys.value, roots)),
+    );
+  } catch (err) {
+    console.warn('保存路径显示设置失败', err);
+  }
+});
 
 // 树模式搜索时自动展开命中的分支
 watch(filterTreeData, () => {

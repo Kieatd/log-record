@@ -295,6 +295,56 @@ export function sortTreeLeavesByRecency(
   return [...dirs, ...leaves];
 }
 
+/** 默认隐藏的路径：前两级（第 1 级 = 域名，第 2 级 = 第一段路径，例：api） */
+export function getDefaultHiddenPathKeys(nodes: PathSegmentNode[]): string[] {
+  const keys: string[] = [];
+  nodes.forEach((level1) => {
+    keys.push(level1.key);
+    level1.children?.forEach((level2) => keys.push(level2.key));
+  });
+  return keys;
+}
+
+/**
+ * 把「绝对路径 key」转成「相对域名」的形式，用于持久化。
+ *
+ * 例：['https://host', 'https://host/api'] + roots=['https://host']
+ *     => ['', '/api']
+ *
+ * 好处：换环境（域名变了）设置仍然能沿用，不会因为域名不同而全部失效。
+ */
+export function toRelativePathKeys(
+  keys: Iterable<string>,
+  roots: string[],
+): string[] {
+  const result: string[] = [];
+  for (const key of keys) {
+    // 域名后的 '/' 一起匹配，避免 'https://a.com' 误匹配 'https://a.com.cn/api'
+    const root = roots.find(
+      (item) => key === item || key.startsWith(`${item}/`),
+    );
+    if (root === undefined) {
+      continue; // 不属于任何已知域名（历史数据），跳过
+    }
+    result.push(key.slice(root.length)); // 域名自身 -> ''
+  }
+  return result;
+}
+
+/** 把「相对域名」的 key 还原到当前域名下。设置对所有域名都生效 */
+export function fromRelativePathKeys(
+  relatives: string[],
+  roots: string[],
+): string[] {
+  const result: string[] = [];
+  roots.forEach((root) => {
+    relatives.forEach((rel) => {
+      result.push(`${root}${rel}`); // rel 为空串时就是域名自身
+    });
+  });
+  return result;
+}
+
 /**
  * 根据被隐藏的路径段拼出展示用的短链接。
  * - 未隐藏的路径段原样保留
