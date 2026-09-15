@@ -291,9 +291,24 @@ const onResNodeClick = computed(() => {
 
 .body-box {
   width: 100%;
+  /* 关键：flex 子项的 min-width 默认是 auto，不会收缩到内容最小宽度以下。
+     而响应体里的长字符串（如 templateAddress）是 nowrap 的，
+     内容最小宽度能到 700+px，于是 body-box 拒绝收缩、
+     把 strip（label 130 + gap 10 + body-box）整个撑爆，
+     溢出再一路传到最外层 → 整个右侧面板出现横向滚动条，
+     一旦横向滑动，标签和表头就会错位、内容被裁掉。
+     设成 0 才能收缩，让 JSON 树（它本身 overflow:auto）内部滚动。 */
+  min-width: 0;
   border: 1px solid var(--color-scroll);
   border-radius: var(--border-radius-large);
   padding: 10px;
+}
+
+/* 请求/响应体是普通文本时走 <pre> 分支。
+   pre 默认 nowrap，同样会溢出，所以也让它自己内部滚动 */
+.body-box > pre {
+  min-width: 0;
+  overflow: auto;
 }
 
 .body-toolbar {
