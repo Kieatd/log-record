@@ -19,7 +19,7 @@ const createWindow = () => {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 1200,
-    height: 600,
+    height: 800,
     titleBarStyle: 'hidden',
     titleBarOverlay: true,
     webPreferences: {
