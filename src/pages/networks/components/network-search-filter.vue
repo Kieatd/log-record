@@ -26,7 +26,11 @@ const networkStore = useNetworkStore()
   align-items: center;
   flex-direction: row;
   margin: 10px;
-  width: 100%;
+  /* 千万不要写 width: 100%：width 不包含 margin，
+     总宽会变成 100% + 20px，把最外层容器撑出横向滚动条；
+     一旦横向滑动，整页内容（包括左侧列表）就会错位。
+     交给 flex 拉伸即可，加上 min-width: 0 防未来再溢出。 */
+  min-width: 0;
 }
 
 :deep(.search-box) {

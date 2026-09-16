@@ -16,6 +16,9 @@ import NetworkSearchFilter from './components/network-search-filter.vue';
   width: 100%;
   display: flex;
   flex-direction: column;
+  /* 安全网：子元素万一溢出也只裁切，不让整页出现横向滚动。
+     横向滚动会让整个界面错位，体验很差 */
+  overflow: hidden;
 }
 
 .real-time {
