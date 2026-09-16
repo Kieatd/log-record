@@ -19,8 +19,17 @@ import {
   toRelativePathKeys,
 } from '@/utils/network';
 import {
+  firstMatchedRule,
+  hexToRgba,
+  splitByKeywordRules,
+} from '@/utils/highlight';
+import {
   ApartmentOutlined,
   ClockCircleOutlined,
+  CloseOutlined,
+  EyeInvisibleOutlined,
+  HighlightOutlined,
+  PlusOutlined,
   SettingOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons-vue';
@@ -98,18 +107,201 @@ const pathExpandedKeys = ref<(string | number)[]>([]);
 // 平铺模式的过滤结果（与搜索共用同一套条件）
 // 序号按「到达顺序」编号：最早收到 = 1，最新收到 = 最大；搜索过滤时不重新编号
 const flatList = computed(() =>
-  filterFlatRequests(allRequestsNewestFirst.value, debouncedFilter.value).map(
-    (item) => ({
+  filterFlatRequests(allRequestsNewestFirst.value, debouncedFilter.value)
+    .map((item) => ({
       ...item,
       no: arrivalNumbers.value.get(String(item.id)) ?? 0,
       shortUrl: formatShortUrl(item.url ?? '', hiddenKeys.value),
-    }),
-  ),
+    }))
+    // 忽略规则放在最后：先按搜索过滤，再把命中忽略关键词的整条去掉
+    .filter((item) => !isIgnoredUrl(item.shortUrl)),
 );
+
+// 被忽略规则隐藏掉的条数（列表底部提示用，免得以为数据丢了）
+const ignoredCount = computed(() => {
+  if (!activeIgnoreKeywords.value.length) {
+    return 0;
+  }
+  return filterFlatRequests(
+    allRequestsNewestFirst.value,
+    debouncedFilter.value,
+  ).filter((item) =>
+    isIgnoredUrl(formatShortUrl(item.url ?? '', hiddenKeys.value)),
+  ).length;
+});
 
 // 树模式：叶子节点的 key 就是请求 id，用同一份映射取序号
 const arrivalNoOf = (key: string | number) =>
   arrivalNumbers.value.get(String(key)) ?? '';
+
+/* ---------------- 接口列表关键词高亮 ---------------- */
+
+const KEYWORDS_STORAGE_KEY = 'Log Record$$highlightKeywords';
+// 预设色板：antd 4.2.6 没有 ColorPicker 组件，新建时先给一个好看的默认色，
+// 想要别的颜色点色块用系统取色器改
+const KEYWORD_COLORS = [
+  '#fa541c',
+  '#faad14',
+  '#52c41a',
+  '#13c2c2',
+  '#1677ff',
+  '#722ed1',
+  '#eb2f96',
+  '#8c8c8c',
+];
+
+type KeywordItem = { id: string; text: string; color: string };
+
+const readKeywords = (): KeywordItem[] => {
+  try {
+    const raw = localStorage.getItem(KEYWORDS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((item: any) => item && typeof item.text === 'string')
+      .map((item: any, index: number) => ({
+        id: `kw-${index}-${item.text}`,
+        text: item.text,
+        color:
+          typeof item.color === 'string'
+            ? item.color
+            : KEYWORD_COLORS[index % KEYWORD_COLORS.length],
+      }));
+  } catch (err) {
+    console.warn('读取关键词高亮配置失败', err);
+    return [];
+  }
+};
+
+const highlightKeywords = ref<KeywordItem[]>(readKeywords());
+
+// 存的时候不带 id（id 只是运行期用于 v-for 的 key）
+watch(
+  highlightKeywords,
+  () => {
+    try {
+      localStorage.setItem(
+        KEYWORDS_STORAGE_KEY,
+        JSON.stringify(
+          highlightKeywords.value.map(({ text, color }) => ({ text, color })),
+        ),
+      );
+    } catch (err) {
+      console.warn('保存关键词高亮配置失败', err);
+    }
+  },
+  { deep: true },
+);
+
+const addKeyword = () => {
+  highlightKeywords.value = [
+    ...highlightKeywords.value,
+    {
+      id: `kw-${Date.now().toString(36)}`,
+      text: '',
+      color:
+        KEYWORD_COLORS[highlightKeywords.value.length % KEYWORD_COLORS.length],
+    },
+  ];
+};
+
+const removeKeyword = (id: string) => {
+  highlightKeywords.value = highlightKeywords.value.filter(
+    (item) => item.id !== id,
+  );
+};
+
+// 参与匹配的规则（新建但还没填内容的先不计入）
+const activeKeywordRules = computed(() =>
+  highlightKeywords.value.filter((item) => item.text.trim()),
+);
+
+/**
+ * 按关键词把「展示出来的链接」切成带颜色的片段。
+ *
+ * 注意传的是 shortUrl：它已经按「路径显示设置」隐藏过层级，
+ * 所以被隐藏的路径不参与匹配 —— 这正是需求要的行为。
+ */
+const splitFlatUrl = (shortUrl: string) =>
+  splitByKeywordRules(shortUrl, activeKeywordRules.value);
+
+/** 整行高亮：左侧色条 + 淡底色（选中行不加底色，避免和选中态冲突） */
+const flatItemStyle = (item: Record<string, any>) => {
+  const rule = firstMatchedRule(item.shortUrl ?? '', activeKeywordRules.value);
+  if (!rule) {
+    return undefined;
+  }
+  const isSelected = networkStore.selectedRequest?.id === item.id;
+  return {
+    borderLeftColor: rule.color,
+    backgroundColor: isSelected ? undefined : hexToRgba(rule.color, 0.1),
+  };
+};
+
+/* ---------------- 忽略规则：命中关键词的接口直接从列表隐藏 ---------------- */
+
+const IGNORE_STORAGE_KEY = 'Log Record$$ignoreKeywords';
+
+const readIgnoreKeywords = (): string[] => {
+  try {
+    const raw = localStorage.getItem(IGNORE_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((item: any) => typeof item === 'string')
+      : [];
+  } catch (err) {
+    console.warn('读取忽略规则失败', err);
+    return [];
+  }
+};
+
+const ignoreKeywords = ref<string[]>(readIgnoreKeywords());
+
+watch(
+  ignoreKeywords,
+  () => {
+    try {
+      localStorage.setItem(
+        IGNORE_STORAGE_KEY,
+        JSON.stringify(ignoreKeywords.value.filter((item) => item.trim())),
+      );
+    } catch (err) {
+      console.warn('保存忽略规则失败', err);
+    }
+  },
+  { deep: true },
+);
+
+const addIgnoreKeyword = () => {
+  ignoreKeywords.value = [...ignoreKeywords.value, ''];
+};
+
+const removeIgnoreKeyword = (index: number) => {
+  ignoreKeywords.value = ignoreKeywords.value.filter((_, i) => i !== index);
+};
+
+const activeIgnoreKeywords = computed(() =>
+  ignoreKeywords.value.map((item) => item.trim()).filter(Boolean),
+);
+
+/**
+ * 该不该隐藏。和关键词高亮一样只匹配「列表里显示出来的链接」，
+ * 已被路径设置隐藏的层级不参与匹配。
+ */
+const isIgnoredUrl = (shortUrl: string) => {
+  const target = shortUrl.toLowerCase();
+  return activeIgnoreKeywords.value.some((keyword) =>
+    target.includes(keyword.toLowerCase()),
+  );
+};
 
 // 受控的勾选状态：以 hiddenKeys 为准，新出现的路径默认可见
 const pathCheckedKeys = computed(() => ({
@@ -231,7 +423,12 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 
 <template>
   <div class="network-container">
-    <SplitPane :initial-left-width="460" :min-width="200">
+    <!-- storage-key：把拖动后的宽度存到本地，下次打开沿用 -->
+    <SplitPane
+      :initial-left-width="380"
+      :min-width="200"
+      storage-key="network"
+    >
       <template #left>
         <div class="content content-left">
           <div class="network-record">
@@ -267,6 +464,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                       networkStore.selectedRequest?.id === item.id,
                   },
                 ]"
+                :style="flatItemStyle(item)"
                 @click="networkStore.select([item.id])"
               >
                 <span class="flat-index">{{ item.no }}</span>
@@ -278,11 +476,25 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                 </a-tag>
                 <span class="flat-method">{{ item.method }}</span>
                 <span class="flat-url" :title="item.url">
-                  {{ item.shortUrl }}
+                  <!-- 按关键词给命中的片段上色（用的 shortUrl，
+                       已隐藏的路径不参与匹配） -->
+                  <template
+                    v-for="(seg, segIndex) in splitFlatUrl(item.shortUrl)"
+                    :key="segIndex"
+                  >
+                    <span
+                      v-if="seg.color"
+                      :style="{ color: seg.color, fontWeight: 600 }"
+                    >{{ seg.text }}</span>
+                    <template v-else>{{ seg.text }}</template>
+                  </template>
                 </span>
               </div>
               <div v-if="flatList.length === 0" class="flat-empty">
                 {{ $t('空') }}
+              </div>
+              <div v-if="ignoredCount > 0" class="flat-ignored">
+                {{ $t('已按忽略规则隐藏 {count} 条', { count: ignoredCount }) }}
               </div>
             </div>
           </div>
@@ -361,11 +573,133 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   </div>
                 </div>
               </template>
-              <span class="view-toggle" :title="$t('路径显示设置')">
-                <SettingOutlined />
-              </span>
+              <a-tooltip>
+                <template #title>{{ $t('路径显示设置') }}</template>
+                <span class="view-toggle">
+                  <SettingOutlined />
+                </span>
+              </a-tooltip>
             </a-popover>
-            <ClearIcon class="clear" @click="networkStore.onClearNetwork" />
+            <a-popover
+              v-if="networkStore.viewMode === 'flat'"
+              trigger="click"
+              placement="topRight"
+              :overlay-style="{ width: '400px' }"
+            >
+              <template #title>
+                <div class="kw-header">
+                  <span>{{ $t('接口关键词高亮') }}</span>
+                  <a-button type="link" size="small" @click="addKeyword">
+                    <template #icon><PlusOutlined /></template>
+                    {{ $t('新增关键词') }}
+                  </a-button>
+                </div>
+              </template>
+              <template #content>
+                <div class="kw-tip">
+                  {{
+                    $t(
+                      '命中关键词的接口会高亮。只匹配列表里显示出来的链接，已隐藏的路径不参与匹配',
+                    )
+                  }}
+                </div>
+                <div v-if="!highlightKeywords.length" class="kw-empty">
+                  {{ $t('还没有关键词，点右上角新增') }}
+                </div>
+                <div
+                  v-for="kw in highlightKeywords"
+                  :key="kw.id"
+                  class="kw-row"
+                >
+                  <input
+                    class="kw-color"
+                    type="color"
+                    v-model="kw.color"
+                    :title="$t('点击换颜色')"
+                  />
+                  <a-input
+                    v-model:value="kw.text"
+                    class="kw-input"
+                    size="small"
+                    :placeholder="$t('关键词，如 dm')"
+                    allow-clear
+                  />
+                  <a-button
+                    class="kw-del"
+                    type="text"
+                    size="small"
+                    @click="removeKeyword(kw.id)"
+                  >
+                    <template #icon><CloseOutlined /></template>
+                  </a-button>
+                </div>
+              </template>
+              <a-tooltip>
+                <template #title>{{ $t('接口关键词高亮') }}</template>
+                <span class="view-toggle">
+                  <HighlightOutlined />
+                </span>
+              </a-tooltip>
+            </a-popover>
+            <a-popover
+              v-if="networkStore.viewMode === 'flat'"
+              trigger="click"
+              placement="topRight"
+              :overlay-style="{ width: '380px' }"
+            >
+              <template #title>
+                <div class="kw-header">
+                  <span>{{ $t('忽略规则') }}</span>
+                  <a-button type="link" size="small" @click="addIgnoreKeyword">
+                    <template #icon><PlusOutlined /></template>
+                    {{ $t('新增规则') }}
+                  </a-button>
+                </div>
+              </template>
+              <template #content>
+                <div class="kw-tip">
+                  {{
+                    $t(
+                      '链接里出现这些关键词的接口会从列表隐藏。同样只匹配显示出来的链接，已隐藏的路径不参与匹配',
+                    )
+                  }}
+                </div>
+                <div v-if="!ignoreKeywords.length" class="kw-empty">
+                  {{ $t('还没有规则，点右上角新增') }}
+                </div>
+                <div
+                  v-for="(ignoreKeyword, index) in ignoreKeywords"
+                  :key="index"
+                  class="kw-row"
+                >
+                  <a-input
+                    v-model:value="ignoreKeywords[index]"
+                    class="kw-input"
+                    size="small"
+                    :placeholder="$t('关键词，如 generate_204')"
+                    allow-clear
+                  />
+                  <a-button
+                    class="kw-del"
+                    type="text"
+                    size="small"
+                    @click="removeIgnoreKeyword(index)"
+                  >
+                    <template #icon><CloseOutlined /></template>
+                  </a-button>
+                </div>
+              </template>
+              <a-tooltip>
+                <template #title>{{ $t('忽略规则') }}</template>
+                <span class="view-toggle">
+                  <EyeInvisibleOutlined />
+                </span>
+              </a-tooltip>
+            </a-popover>
+            <a-tooltip>
+              <template #title>{{ $t('会把当前列表的接口清除') }}</template>
+              <ClearIcon class="clear" @click="networkStore.onClearNetwork" />
+            </a-tooltip>
           </div>
         </div>
       </template>
@@ -505,6 +839,8 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
+  /* 命中关键词时这个左边框会染成关键词色（默认透明，避免宽度跳动） */
+  border-left: 3px solid transparent;
   border-radius: var(--border-radius-default);
   cursor: pointer;
   min-width: 0;
@@ -566,6 +902,73 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+}
+
+/* 接口关键词高亮弹层 */
+.kw-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kw-header :deep(.ant-btn-link) {
+  height: 22px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--color-main);
+}
+
+.kw-tip {
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.65;
+}
+
+.kw-empty {
+  padding: 6px 0;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.kw-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.kw-color {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--color-scroll);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.kw-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.kw-input :deep(.ant-input) {
+  background-color: var(--color-background);
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.kw-del {
+  flex-shrink: 0;
+  color: var(--color-main);
+}
+
+.flat-ignored {
+  padding: 6px;
+  font-size: 12px;
+  opacity: 0.5;
 }
 
 .flat-empty {
