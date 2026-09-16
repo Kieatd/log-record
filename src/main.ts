@@ -5,21 +5,29 @@ import {
   shell,
   nativeTheme,
   Menu,
+  screen,
 } from 'electron';
 import path from 'path';
 import serverClient from './server';
 import { checkForUpgrade } from './utils/update';
 import { name, author, version } from '../package.json';
 import { getIPAddress } from './utils/node-strings';
+import { loadWindowState, saveWindowState } from './utils/window-state';
 import started from 'electron-squirrel-startup';
 
 if (process.platform === 'win32' && started) app.quit();
 
 const createWindow = () => {
+  // 窗口大小/位置存到 userData/window-state.json，下次打开沿用
+  const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
+  const { maximized, ...savedBounds } = loadWindowState(
+    windowStateFile,
+    screen.getAllDisplays(),
+  );
+
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    ...savedBounds,
     titleBarStyle: 'hidden',
     titleBarOverlay: true,
     webPreferences: {
@@ -94,6 +102,37 @@ const createWindow = () => {
   });
 
   Menu.setApplicationMenu(null);
+
+  if (maximized) {
+    mainWindow.maximize();
+  }
+
+  // 拖动/缩放窗口时保存（防抖：拖的过程中会不断触发 resize）
+  let saveTimer: NodeJS.Timeout | null = null;
+  const persistBounds = () => {
+    if (saveTimer !== null) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    // 最大化/全屏时 getBounds 会返回占满屏幕的尺寸，存这个没意义
+    if (mainWindow.isMinimized()) {
+      return;
+    }
+    saveWindowState(windowStateFile, {
+      ...mainWindow.getNormalBounds(),
+      maximized: mainWindow.isMaximized(),
+    });
+  };
+  const debouncedPersist = () => {
+    if (saveTimer !== null) {
+      clearTimeout(saveTimer);
+    }
+    saveTimer = setTimeout(persistBounds, 400);
+  };
+  mainWindow.on('resize', debouncedPersist);
+  mainWindow.on('move', debouncedPersist);
+  // 关闭前再存一次，避免防抖还没触发就退出了
+  mainWindow.on('close', persistBounds);
 };
 
 app.whenReady().then(createWindow);
