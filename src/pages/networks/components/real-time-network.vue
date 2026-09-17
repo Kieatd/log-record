@@ -21,6 +21,8 @@ import {
 import {
   firstMatchedRule,
   hexToRgba,
+  normalizeIgnoreRules,
+  normalizeKeywordRules,
   splitByKeywordRules,
 } from '@/utils/highlight';
 import {
@@ -150,7 +152,13 @@ const KEYWORD_COLORS = [
   '#8c8c8c',
 ];
 
-type KeywordItem = { id: string; text: string; color: string };
+type KeywordItem = {
+  id: string;
+  text: string;
+  color: string;
+  /** 取消勾选后这条规则不参与匹配（但配置保留） */
+  enabled: boolean;
+};
 
 const readKeywords = (): KeywordItem[] => {
   try {
@@ -162,16 +170,11 @@ const readKeywords = (): KeywordItem[] => {
     if (!Array.isArray(parsed)) {
       return [];
     }
-    return parsed
-      .filter((item: any) => item && typeof item.text === 'string')
-      .map((item: any, index: number) => ({
-        id: `kw-${index}-${item.text}`,
-        text: item.text,
-        color:
-          typeof item.color === 'string'
-            ? item.color
-            : KEYWORD_COLORS[index % KEYWORD_COLORS.length],
-      }));
+    // 迁移与校验交给纯函数（旧存档没有 enabled 字段 → 默认启用）
+    return normalizeKeywordRules(parsed, KEYWORD_COLORS).map((item, index) => ({
+      ...item,
+      id: `kw-${index}-${item.text}`,
+    }));
   } catch (err) {
     console.warn('读取关键词高亮配置失败', err);
     return [];
@@ -188,7 +191,11 @@ watch(
       localStorage.setItem(
         KEYWORDS_STORAGE_KEY,
         JSON.stringify(
-          highlightKeywords.value.map(({ text, color }) => ({ text, color })),
+          highlightKeywords.value.map(({ text, color, enabled }) => ({
+            text,
+            color,
+            enabled,
+          })),
         ),
       );
     } catch (err) {
@@ -206,6 +213,7 @@ const addKeyword = () => {
       text: '',
       color:
         KEYWORD_COLORS[highlightKeywords.value.length % KEYWORD_COLORS.length],
+      enabled: true,
     },
   ];
 };
@@ -216,9 +224,9 @@ const removeKeyword = (id: string) => {
   );
 };
 
-// 参与匹配的规则（新建但还没填内容的先不计入）
+// 参与匹配的规则：取消勾选的、以及还没填内容的都不计入
 const activeKeywordRules = computed(() =>
-  highlightKeywords.value.filter((item) => item.text.trim()),
+  highlightKeywords.value.filter((item) => item.enabled && item.text.trim()),
 );
 
 /**
@@ -247,23 +255,35 @@ const flatItemStyle = (item: Record<string, any>) => {
 
 const IGNORE_STORAGE_KEY = 'Log Record$$ignoreKeywords';
 
-const readIgnoreKeywords = (): string[] => {
+type IgnoreItem = {
+  id: string;
+  text: string;
+  /** 取消勾选后这条规则不生效（但配置保留） */
+  enabled: boolean;
+};
+
+const readIgnoreKeywords = (): IgnoreItem[] => {
   try {
     const raw = localStorage.getItem(IGNORE_STORAGE_KEY);
     if (!raw) {
       return [];
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? parsed.filter((item: any) => typeof item === 'string')
-      : [];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    // 兼容旧版（纯字符串数组）与新版的逻辑在纯函数里，并有单元测试覆盖
+    return normalizeIgnoreRules(parsed).map((item, index) => ({
+      ...item,
+      id: `ig-${index}-${item.text}`,
+    }));
   } catch (err) {
     console.warn('读取忽略规则失败', err);
     return [];
   }
 };
 
-const ignoreKeywords = ref<string[]>(readIgnoreKeywords());
+const ignoreKeywords = ref<IgnoreItem[]>(readIgnoreKeywords());
 
 watch(
   ignoreKeywords,
@@ -271,7 +291,11 @@ watch(
     try {
       localStorage.setItem(
         IGNORE_STORAGE_KEY,
-        JSON.stringify(ignoreKeywords.value.filter((item) => item.trim())),
+        JSON.stringify(
+          ignoreKeywords.value
+            .filter((item) => item.text.trim())
+            .map(({ text, enabled }) => ({ text, enabled })),
+        ),
       );
     } catch (err) {
       console.warn('保存忽略规则失败', err);
@@ -281,15 +305,22 @@ watch(
 );
 
 const addIgnoreKeyword = () => {
-  ignoreKeywords.value = [...ignoreKeywords.value, ''];
+  ignoreKeywords.value = [
+    ...ignoreKeywords.value,
+    { id: `ig-${Date.now().toString(36)}`, text: '', enabled: true },
+  ];
 };
 
-const removeIgnoreKeyword = (index: number) => {
-  ignoreKeywords.value = ignoreKeywords.value.filter((_, i) => i !== index);
+const removeIgnoreKeyword = (id: string) => {
+  ignoreKeywords.value = ignoreKeywords.value.filter((item) => item.id !== id);
 };
 
+// 只有勾选了、且填了内容的规则才生效
 const activeIgnoreKeywords = computed(() =>
-  ignoreKeywords.value.map((item) => item.trim()).filter(Boolean),
+  ignoreKeywords.value
+    .filter((item) => item.enabled)
+    .map((item) => item.text.trim())
+    .filter(Boolean),
 );
 
 /**
@@ -609,8 +640,15 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                 <div
                   v-for="kw in highlightKeywords"
                   :key="kw.id"
-                  class="kw-row"
+                  :class="['kw-row', { 'kw-row-off': !kw.enabled }]"
                 >
+                  <a-tooltip>
+                    <template #title>{{ $t('勾选后这条规则生效') }}</template>
+                    <a-checkbox
+                      v-model:checked="kw.enabled"
+                      class="kw-enabled"
+                    />
+                  </a-tooltip>
                   <input
                     class="kw-color"
                     type="color"
@@ -668,12 +706,19 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   {{ $t('还没有规则，点右上角新增') }}
                 </div>
                 <div
-                  v-for="(ignoreKeyword, index) in ignoreKeywords"
-                  :key="index"
-                  class="kw-row"
+                  v-for="ignoreKeyword in ignoreKeywords"
+                  :key="ignoreKeyword.id"
+                  :class="['kw-row', { 'kw-row-off': !ignoreKeyword.enabled }]"
                 >
+                  <a-tooltip>
+                    <template #title>{{ $t('勾选后这条规则生效') }}</template>
+                    <a-checkbox
+                      v-model:checked="ignoreKeyword.enabled"
+                      class="kw-enabled"
+                    />
+                  </a-tooltip>
                   <a-input
-                    v-model:value="ignoreKeywords[index]"
+                    v-model:value="ignoreKeyword.text"
                     class="kw-input"
                     size="small"
                     :placeholder="$t('关键词，如 generate_204')"
@@ -683,7 +728,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                     class="kw-del"
                     type="text"
                     size="small"
-                    @click="removeIgnoreKeyword(index)"
+                    @click="removeIgnoreKeyword(ignoreKeyword.id)"
                   >
                     <template #icon><CloseOutlined /></template>
                   </a-button>
@@ -936,6 +981,17 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   align-items: center;
   gap: 6px;
   margin-bottom: 6px;
+}
+
+/* 未勾选（不生效）的规则整行变淡，一眼能区分 */
+.kw-row-off :deep(.ant-input),
+.kw-row-off .kw-color {
+  opacity: 0.45;
+}
+
+.kw-enabled {
+  flex-shrink: 0;
+  margin-right: 2px;
 }
 
 .kw-color {

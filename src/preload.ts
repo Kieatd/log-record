@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       callback(model, clientIP),
     ),
   openUrl: (url: string) => ipcRenderer.send('openUrl', url),
+  sendRequest: (options: {
+    method?: string;
+    url: string;
+    headers?: Record<string, string>;
+    body?: string;
+  }) => ipcRenderer.invoke('sendRequest', options),
   checkIsUpdate: () => ipcRenderer.invoke('checkIsUpdate'),
   toggleDevTools: () => ipcRenderer.invoke('toggleDevTools'),
   connectPhone: (clientIP: string, isAgree: boolean) => {

@@ -284,3 +284,73 @@ export function hexToRgba(hex: string, alpha: number): string {
   }
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
+
+/* ---------------- 规则存档的读取/迁移 ---------------- */
+
+export type StoredKeywordRule = {
+  text: string;
+  color: string;
+  enabled: boolean;
+};
+
+export type StoredIgnoreRule = {
+  text: string;
+  enabled: boolean;
+};
+
+/**
+ * 解析「关键词高亮」的本地存档。
+ *
+ * 兼容两种情况：
+ * - 旧版：`[{ text, color }]`（没有 enabled 字段 → 默认启用）
+ * - 当前：`[{ text, color, enabled }]`
+ *
+ * 内容不合法的条目会被丢掉（不会因为一条坏数据导致整份配置读不出来）。
+ */
+export function normalizeKeywordRules(
+  raw: unknown,
+  fallbackColors: string[],
+): StoredKeywordRule[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item: any, index: number): StoredKeywordRule | null => {
+      if (!item || typeof item.text !== 'string') {
+        return null;
+      }
+      return {
+        text: item.text,
+        color:
+          typeof item.color === 'string' && item.color
+            ? item.color
+            : fallbackColors[index % fallbackColors.length],
+        enabled: item.enabled !== false,
+      };
+    })
+    .filter((item): item is StoredKeywordRule => item !== null);
+}
+
+/**
+ * 解析「忽略规则」的本地存档。
+ *
+ * 兼容两种情况：
+ * - 旧版：`['generate_204', ...]`（纯字符串数组 → 默认启用）
+ * - 当前：`[{ text, enabled }]`
+ */
+export function normalizeIgnoreRules(raw: unknown): StoredIgnoreRule[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item: any): StoredIgnoreRule | null => {
+      if (typeof item === 'string') {
+        return { text: item, enabled: true };
+      }
+      if (item && typeof item.text === 'string') {
+        return { text: item.text, enabled: item.enabled !== false };
+      }
+      return null;
+    })
+    .filter((item): item is StoredIgnoreRule => item !== null);
+}

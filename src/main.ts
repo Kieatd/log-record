@@ -81,6 +81,64 @@ const createWindow = () => {
     shell.openExternal(url);
   });
 
+  // 重新请求：由主进程发出去（渲染进程发会受 CORS 限制）
+  ipcMain.handle(
+    'sendRequest',
+    async (
+      _,
+      options: {
+        method?: string;
+        url: string;
+        headers?: Record<string, string>;
+        body?: string;
+        timeout?: number;
+      },
+    ) => {
+      const started = Date.now();
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        options.timeout ?? 15000,
+      );
+      try {
+        const method = (options.method ?? 'GET').toUpperCase();
+        // GET/HEAD 不允许带 body，带了 fetch 会直接报错
+        const canHaveBody = !['GET', 'HEAD'].includes(method);
+        const response = await fetch(options.url, {
+          method,
+          headers: options.headers ?? {},
+          body: canHaveBody && options.body ? options.body : undefined,
+          signal: controller.signal,
+          redirect: 'follow',
+        });
+        const text = await response.text();
+        const headers: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          headers[key] = value;
+        });
+        return {
+          ok: true,
+          statusCode: response.status,
+          statusText: response.statusText,
+          headers,
+          body: text,
+          durationMs: Date.now() - started,
+        };
+      } catch (err: any) {
+        return {
+          ok: false,
+          error:
+            err?.name === 'AbortError'
+              ? '请求超时'
+              : (err?.message ?? String(err)),
+          durationMs: Date.now() - started,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  );
+
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
