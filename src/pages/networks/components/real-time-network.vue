@@ -626,8 +626,8 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   :style="flatItemStyle(item)"
                   @click="networkStore.select([item.id])"
                 >
-                <!-- ① 序号（含标记星标；星标槽固定宽度，避免标记后整行右移） -->
-                <span class="flat-group flat-group-index">
+                <!-- 第一组（带框）：序号 + 响应码 + 耗时 + 请求方法 -->
+                <span class="flat-group flat-group-meta">
                   <span class="flat-index">{{ item.no }}</span>
                   <span class="flat-mark-slot">
                     <a-tooltip v-if="networkStore.isMarked(item.id)">
@@ -635,9 +635,6 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                       <StarFilled class="flat-mark" />
                     </a-tooltip>
                   </span>
-                </span>
-                <!-- ② 状态码 + 耗时 + 方法 -->
-                <span class="flat-group flat-group-meta">
                   <a-tag v-if="item.loading" class="flat-tag">
                     <clock-circle-outlined :spin="true" />
                   </a-tag>
@@ -648,7 +645,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   <span class="flat-duration">{{ formatDuration(durationOf(item)) }}</span>
                   <span class="flat-method">{{ item.method }}</span>
                 </span>
-                <!-- ③ 接口地址（占满剩余宽度） -->
+                <!-- 第二组：接口地址（占满剩余宽度） -->
                 <span class="flat-group flat-group-url">
                 <span class="flat-url" :title="item.url">
                   <!-- 按关键词给命中的片段上色（用的 shortUrl，
@@ -1050,8 +1047,10 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   color: var(--color-background);
 }
 
-/* 三组：序号 / 状态码+耗时+方法 / 接口地址。
-   组内用小间距，组间用 .flat-item 的 gap，这样一眼能看出分组 */
+/* 两组：
+     第一组 = 序号 + 响应码 + 耗时 + 请求方法（装在一个框里）
+     第二组 = 接口地址（占满剩余宽度）
+   组内用小间距，组间用 .flat-item 的 gap（14px），一眼能看出是两块 */
 .flat-group {
   display: inline-flex;
   align-items: center;
@@ -1059,17 +1058,22 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   min-width: 0;
 }
 
-/* 序号组自己固定宽度，保证第二组起点一致 */
-.flat-group-index {
-  flex-shrink: 0;
-}
-
-/* 第二组各列自己就是固定宽度的，不让它被压缩 */
+/* 第一组：带框，四列间距 6px；各列自己就是固定宽度，不让它被压缩 */
 .flat-group-meta {
   flex-shrink: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--color-scroll);
+  border-radius: var(--border-radius-default);
+  background-color: rgba(51, 102, 102, 0.06);
 }
 
-/* 第三组占满剩余宽度，长地址自己截断 */
+/* 选中行是深色底，框的颜色要跟着反过来，否则看不清 */
+.flat-item-selected .flat-group-meta {
+  border-color: rgba(255, 255, 255, 0.35);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* 第二组占满剩余宽度，长地址自己截断 */
 .flat-group-url {
   flex: 1;
   min-width: 0;
@@ -1151,6 +1155,10 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 
 .flat-method {
   flex-shrink: 0;
+  /* 固定宽度：POST(4字符) 和 GET(3字符) 宽度不同的话，
+     框的右边缘就会跟着变，框里的四列也就对不齐了 */
+  min-width: 48px;
+  text-align: left;
   font-size: 11px;
   font-weight: 600;
   opacity: 0.85;
