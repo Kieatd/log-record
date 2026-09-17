@@ -630,12 +630,6 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                 <span class="flat-group flat-group-meta">
                   <span class="flat-cell flat-cell-index">
                     <span class="flat-index">{{ item.no }}</span>
-                    <span class="flat-mark-slot">
-                      <a-tooltip v-if="networkStore.isMarked(item.id)">
-                        <template #title>{{ $t('已标记（清除时会保留）') }}</template>
-                        <StarFilled class="flat-mark" />
-                      </a-tooltip>
-                    </span>
                   </span>
                   <span class="flat-cell">
                     <a-tag v-if="item.loading" class="flat-tag">
@@ -651,6 +645,14 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   </span>
                   <span class="flat-cell">
                     <span class="flat-method">{{ item.method }}</span>
+                  </span>
+                  <!-- 标记的星标单独占一格，追加在最后：
+                       这样四个字段的位置不受影响，星标也在框内 -->
+                  <span v-if="networkStore.isMarked(item.id)" class="flat-cell">
+                    <a-tooltip>
+                      <template #title>{{ $t('已标记（清除时会保留）') }}</template>
+                      <StarFilled class="flat-mark" />
+                    </a-tooltip>
                   </span>
                 </span>
                 <!-- 第二组：接口地址（占满剩余宽度） -->
@@ -1075,8 +1077,6 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   border: 1px solid var(--color-scroll);
   border-radius: var(--border-radius-default);
   background-color: rgba(51, 102, 102, 0.06);
-  /* 让圆角裁掉格子自己的直角 */
-  overflow: hidden;
 }
 
 /* 单个格子：内容居中，右侧一条分隔线，最后一格不要线 */
@@ -1108,13 +1108,9 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   min-width: 0;
 }
 
-/* 星标槽：不管有没有标记都占同样宽度，避免标记后整行右移 */
-.flat-mark-slot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 12px;
-  flex-shrink: 0;
+/* 星标所在的那一格：比别的格窄一些 */
+.flat-cell:has(.flat-mark) {
+  padding: 1px 4px;
 }
 
 /* 耗时：固定宽度 + 左对齐。
@@ -1122,7 +1118,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 .flat-duration {
   flex-shrink: 0;
   min-width: 36px;
-  text-align: left;
+  text-align: center;
   font-size: 11px;
   opacity: 0.55;
   font-variant-numeric: tabular-nums;
@@ -1187,7 +1183,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   /* 固定宽度：POST(4字符) 和 GET(3字符) 宽度不同的话，
      框的右边缘就会跟着变，框里的四列也就对不齐了 */
   min-width: 32px;
-  text-align: left;
+  text-align: center;
   font-size: 11px;
   font-weight: 600;
   opacity: 0.85;
