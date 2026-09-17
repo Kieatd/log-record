@@ -232,12 +232,10 @@ const onPauseOrPlay = (clientIP: string) => {
           <p>
             {{ $t('1. 请在需要调试的手机上写上这个 IP 地址：') }}
             <span class="ip" @click="copyIp(ip)">{{ ip }}</span>
-            <!-- 有多个候选地址时才出现：点开列出全部，点其中一个即复制 -->
-            <a-popover
-              v-if="ipList.length > 1"
-              trigger="click"
-              placement="bottomLeft"
-            >
+            <!-- 始终显示：本机有几个地址、排除了哪些，点开就能看到，
+                 点其中一个即复制。之前写成「有 2 个以上才显示」，
+                 结果单网卡的机器上根本看不到这个入口 -->
+            <a-popover trigger="click" placement="bottomLeft">
               <template #content>
                 <div class="ip-picker">
                   <div class="ip-picker-tip">{{ $t('点击即可复制：') }}</div>
