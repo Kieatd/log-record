@@ -40,6 +40,20 @@ export default {
   忽略规则: 'Ignore rules',
   勾选后这条规则生效: 'Enabled (uncheck to disable)',
   会把当前列表的接口清除: 'Clear all interfaces in the list',
+  '标记':
+    'Mark',
+  '取消标记':
+    'Unmark',
+  '已标记（清除时会保留）':
+    'Marked (kept when clearing)',
+  '单击：清除未标记的接口；快速双击：连标记一起清除':
+    'Click: clear unmarked. Double-click: clear everything including marked.',
+  '已清除全部接口':
+    'Cleared all requests',
+  '已清除全部接口（包括标记的）':
+    'Cleared everything, including marked requests',
+  '已清除未标记的接口，保留了 {count} 条标记':
+    'Cleared unmarked requests, kept {count} marked',
   复制请求体完整内容: 'Copy the full request body',
   复制请求参数: 'Copy request params',
   重新请求: 'Re-send',

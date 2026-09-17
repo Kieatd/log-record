@@ -33,12 +33,15 @@ import {
   HighlightOutlined,
   PlusOutlined,
   SettingOutlined,
+  StarFilled,
   UnorderedListOutlined,
 } from '@ant-design/icons-vue';
-import { TreeProps } from 'ant-design-vue';
+import { message, TreeProps } from 'ant-design-vue';
+import { useI18n } from 'vue-i18n';
 import type { SearchFilterType } from '@/types/global';
 
 const networkStore = useNetworkStore();
+const i18n = useI18n();
 const expandedKeys = ref<(string | number)[]>([]);
 
 // 搜索输入做 300ms 防抖，避免大数据量下每次按键都全量重算
@@ -249,6 +252,52 @@ const flatItemStyle = (item: Record<string, any>) => {
     borderLeftColor: rule.color,
     backgroundColor: isSelected ? undefined : hexToRgba(rule.color, 0.1),
   };
+};
+
+// 清除后重建的树是折叠的，这里把它重新展开，
+// 否则保留了标记项也看不见，像是数据被清空了
+watch(
+  () => networkStore.treeExpandToken,
+  () => {
+    expandedKeys.value = collectPathKeys(networkStore.treeData ?? []);
+  },
+);
+
+/* ---------------- 清除按钮：单击 / 快速双击 ---------------- */
+
+// 快速双击的判定窗口
+const CLEAR_DOUBLE_MS = 450;
+let lastClearAt = 0;
+
+/**
+ * 单击：清掉没标记的接口（标记的留着）
+ * 快速双击：连标记一起清空
+ *
+ * 之所以不做「二次确认弹窗」：抓包时清列表是很高频的操作，
+ * 每次弹窗很烦；用「双击才全清」把破坏性操作和不破坏的分开。
+ */
+const onClearClick = () => {
+  const now = Date.now();
+  const isDoubleClick = now - lastClearAt < CLEAR_DOUBLE_MS;
+  lastClearAt = now;
+
+  if (isDoubleClick) {
+    // 归零，避免「连点三下」被算成第二次双击
+    lastClearAt = 0;
+    networkStore.onClearNetwork(true);
+    message.info(i18n.t('已清除全部接口（包括标记的）'));
+    return;
+  }
+
+  const markedCount = Object.keys(networkStore.markedIds).length;
+  networkStore.onClearNetwork(false);
+  message.info(
+    markedCount
+      ? i18n.t('已清除未标记的接口，保留了 {count} 条标记', {
+          count: markedCount,
+        })
+      : i18n.t('已清除全部接口'),
+  );
 };
 
 /* ---------------- 忽略规则：命中关键词的接口直接从列表隐藏 ---------------- */
@@ -472,33 +521,68 @@ const getStatusCodeKey = (item: Record<string, any>) =>
             >
               <template #title="{ title, isLeaf, statusCodeKey, statusCode, key }">
                 <span v-if="isLeaf">
-                  <span class="tree-index">{{ arrivalNoOf(key) }}</span>
-                  <a-tag v-if="statusCodeKey === 'processing'">
-                    <clock-circle-outlined :spin="true" />
-                  </a-tag>
-                  <a-tag v-else :color="statusCodeKey">
-                    {{ statusCode }}
-                  </a-tag>
-                  <span>{{ title }}</span>
+                  <a-dropdown :trigger="['contextmenu']">
+                    <template #overlay>
+                      <a-menu>
+                        <a-menu-item @click="networkStore.toggleMarked(key)">
+                          {{
+                            networkStore.isMarked(key) ? $t('取消标记') : $t('标记')
+                          }}
+                        </a-menu-item>
+                      </a-menu>
+                    </template>
+                    <span class="tree-leaf">
+                      <a-tooltip v-if="networkStore.isMarked(key)">
+                        <template #title>{{ $t('已标记（清除时会保留）') }}</template>
+                        <StarFilled class="flat-mark" />
+                      </a-tooltip>
+                      <span class="tree-index">{{ arrivalNoOf(key) }}</span>
+                      <a-tag v-if="statusCodeKey === 'processing'">
+                        <clock-circle-outlined :spin="true" />
+                      </a-tag>
+                      <a-tag v-else :color="statusCodeKey">
+                        {{ statusCode }}
+                      </a-tag>
+                      <span>{{ title }}</span>
+                    </span>
+                  </a-dropdown>
                 </span>
                 <span v-else>{{ title }}</span>
               </template>
             </a-directory-tree>
             <div v-else class="flat-list">
-              <div
+              <!-- 右键接口可以标记；标记过的接口在「清除」时不会被清掉 -->
+              <a-dropdown
                 v-for="item in flatList"
                 :key="item.id"
-                :class="[
-                  'flat-item',
-                  {
-                    'flat-item-selected':
-                      networkStore.selectedRequest?.id === item.id,
-                  },
-                ]"
-                :style="flatItemStyle(item)"
-                @click="networkStore.select([item.id])"
+                :trigger="['contextmenu']"
               >
+                <template #overlay>
+                  <a-menu>
+                    <a-menu-item
+                      :key="'mark'"
+                      @click="networkStore.toggleMarked(item.id)"
+                    >
+                      {{ networkStore.isMarked(item.id) ? $t('取消标记') : $t('标记') }}
+                    </a-menu-item>
+                  </a-menu>
+                </template>
+                <div
+                  :class="[
+                    'flat-item',
+                    {
+                      'flat-item-selected':
+                        networkStore.selectedRequest?.id === item.id,
+                    },
+                  ]"
+                  :style="flatItemStyle(item)"
+                  @click="networkStore.select([item.id])"
+                >
                 <span class="flat-index">{{ item.no }}</span>
+                <a-tooltip v-if="networkStore.isMarked(item.id)">
+                  <template #title>{{ $t('已标记（清除时会保留）') }}</template>
+                  <StarFilled class="flat-mark" />
+                </a-tooltip>
                 <a-tag v-if="item.loading" class="flat-tag">
                   <clock-circle-outlined :spin="true" />
                 </a-tag>
@@ -520,7 +604,8 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                     <template v-else>{{ seg.text }}</template>
                   </template>
                 </span>
-              </div>
+                </div>
+              </a-dropdown>
               <div v-if="flatList.length === 0" class="flat-empty">
                 {{ $t('空') }}
               </div>
@@ -742,8 +827,10 @@ const getStatusCodeKey = (item: Record<string, any>) =>
               </a-tooltip>
             </a-popover>
             <a-tooltip>
-              <template #title>{{ $t('会把当前列表的接口清除') }}</template>
-              <ClearIcon class="clear" @click="networkStore.onClearNetwork" />
+              <template #title>
+                {{ $t('单击：清除未标记的接口；快速双击：连标记一起清除') }}
+              </template>
+              <ClearIcon class="clear" @click="onClearClick" />
             </a-tooltip>
           </div>
         </div>
@@ -899,6 +986,19 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 .flat-item-selected:hover {
   background-color: var(--color-main);
   color: var(--color-background);
+}
+
+/* 标记图标：金黄色五角星，靠左方便一眼扫到 */
+.flat-mark {
+  flex-shrink: 0;
+  color: #faad14;
+  font-size: 12px;
+}
+
+.tree-leaf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .flat-index {

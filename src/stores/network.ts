@@ -75,9 +75,75 @@ const useNetworkStore = defineStore('network', () => {
       console.warn('在整理网络数据的地方出现了错误', error);
     }
   };
-  const onClearNetwork = () => {
-    treeData.value = [];
-    requests.value = {};
+  /**
+   * 标记（右键接口 → 标记）。
+   *
+   * 标记存在的意义：抓包时噪声很多，把关心的几条标起来，
+   * 清除时它们不会被清掉，可以一直留在列表里对照。
+   */
+  const markedIds = ref<Record<string, boolean>>({});
+
+  /**
+   * 清除后让树视图重新展开的信号。
+   *
+   * 重建 treeData 时目录节点的 key 是 `${part}-${Date.now()}`，
+   * 每次都不一样，组件里存的 expandedKeys 就对不上了 —— 树会自动收起来，
+   * 看着像「数据全被清掉了」，其实保留的标记项还在里面。所以清完发个信号
+   * 让组件把树展开。
+   */
+  const treeExpandToken = ref(0);
+
+  const isMarked = (id: string | number) => !!markedIds.value[String(id)];
+
+  const toggleMarked = (id: string | number) => {
+    const key = String(id);
+    if (markedIds.value[key]) {
+      delete markedIds.value[key];
+    } else {
+      markedIds.value[key] = true;
+    }
+  };
+
+  /**
+   * 清除列表。
+   *
+   * 默认只清「没标记」的，标记的留下来；
+   * includeMarked = true 连标记一起清（界面上是「快速双击清除按钮」）。
+   */
+  const onClearNetwork = (includeMarked = false) => {
+    if (includeMarked) {
+      markedIds.value = {};
+      treeData.value = [];
+      requests.value = {};
+      selectedRequest.value = {};
+      return;
+    }
+    const kept: Record<string, any> = {};
+    Object.entries(requests.value).forEach(([id, item]) => {
+      if (markedIds.value[id]) {
+        kept[id] = item;
+      }
+    });
+    requests.value = kept;
+    // 树要跟着重建，否则上面还挂着已经被清掉的分支
+    treeData.value = Object.entries(kept).reduce(
+      (tree, [id, item]: [string, any]) =>
+        addUrlToTree(tree, {
+          statusCode: item.statusCode,
+          loading: item.loading,
+          id,
+          url: item.url,
+        }),
+      [] as TreeProps['treeData'],
+    );
+    treeExpandToken.value += 1;
+    // 选中的那条被清掉了，详情面板也一起清空，免得显示一条已经不在列表里的数据
+    if (
+      selectedRequest.value?.id &&
+      !markedIds.value[String(selectedRequest.value.id)]
+    ) {
+      selectedRequest.value = {};
+    }
   };
   const select = (selectedKeys: string) => {
     selectedRequest.value = requests.value[selectedKeys[0]];
@@ -88,6 +154,10 @@ const useNetworkStore = defineStore('network', () => {
   return {
     updateTreeData,
     onClearNetwork,
+    markedIds,
+    isMarked,
+    toggleMarked,
+    treeExpandToken,
     treeData,
     selectedRequest,
     select,
