@@ -109,6 +109,53 @@ const hiddenKeys = ref<Set<string>>(new Set());
 const pathTree = computed(() => buildPathSettingTree(allRequestsNewestFirst.value));
 const pathExpandedKeys = ref<(string | number)[]>([]);
 
+/* ---------------- 请求耗时（发出 → 收到响应） ---------------- */
+
+/**
+ * 把上报的时间字段转成毫秒时间戳。
+ * 可能是 ISO 字符串，也可能是数字/数字字符串（不同版本的插件不一样），都兜住。
+ */
+const toTime = (value: unknown): number | null => {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  const text = String(value);
+  if (/^\d+$/.test(text)) {
+    return Number(text);
+  }
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+/**
+ * 请求发出到收到响应的耗时（毫秒）。
+ *
+ * 两个时间点都是手机插件上报的：请求事件带 createTime，响应事件带 endTime。
+ * 拿不到就算不出来（还在等响应、字段缺失、时间倒挂），返回 null，
+ * 界面上这一格就留空 —— 位置保留，避免行内容左右跳动。
+ */
+const durationOf = (item: Record<string, any>): number | null => {
+  const start = toTime(item.createTime);
+  const end = toTime(item.endTime);
+  if (start === null || end === null || end < start) {
+    return null;
+  }
+  return end - start;
+};
+
+const formatDuration = (ms: number | null): string => {
+  if (ms === null) {
+    return '';
+  }
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+  return `${(ms / 1000).toFixed(2)}s`;
+};
+
 // 平铺模式的过滤结果（与搜索共用同一套条件）
 // 序号按「到达顺序」编号：最早收到 = 1，最新收到 = 最大；搜索过滤时不重新编号
 const flatList = computed(() =>
@@ -536,6 +583,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                         <template #title>{{ $t('已标记（清除时会保留）') }}</template>
                         <StarFilled class="flat-mark" />
                       </a-tooltip>
+                      <span class="flat-duration">{{ formatDuration(durationOf(networkStore.requests[key] ?? {})) }}</span>
                       <span class="tree-index">{{ arrivalNoOf(key) }}</span>
                       <a-tag v-if="statusCodeKey === 'processing'">
                         <clock-circle-outlined :spin="true" />
@@ -578,6 +626,8 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   :style="flatItemStyle(item)"
                   @click="networkStore.select([item.id])"
                 >
+                <!-- 耗时：请求发出 → 收到响应，放在序号前面 -->
+                <span class="flat-duration">{{ formatDuration(durationOf(item)) }}</span>
                 <span class="flat-index">{{ item.no }}</span>
                 <a-tooltip v-if="networkStore.isMarked(item.id)">
                   <template #title>{{ $t('已标记（清除时会保留）') }}</template>
@@ -986,6 +1036,16 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 .flat-item-selected:hover {
   background-color: var(--color-main);
   color: var(--color-background);
+}
+
+/* 耗时：固定宽度 + 右对齐，ms 和 s 混排时序号也能对齐 */
+.flat-duration {
+  flex-shrink: 0;
+  min-width: 48px;
+  text-align: right;
+  font-size: 11px;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 标记图标：金黄色五角星，靠左方便一眼扫到 */
