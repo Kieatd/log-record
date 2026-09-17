@@ -626,20 +626,30 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   :style="flatItemStyle(item)"
                   @click="networkStore.select([item.id])"
                 >
-                <span class="flat-index">{{ item.no }}</span>
-                <a-tooltip v-if="networkStore.isMarked(item.id)">
-                  <template #title>{{ $t('已标记（清除时会保留）') }}</template>
-                  <StarFilled class="flat-mark" />
-                </a-tooltip>
-                <a-tag v-if="item.loading" class="flat-tag">
-                  <clock-circle-outlined :spin="true" />
-                </a-tag>
-                <a-tag v-else class="flat-tag" :color="getStatusCodeKey(item)">
-                  {{ item.statusCode ?? '-' }}
-                </a-tag>
-                <!-- 耗时：请求发出 → 收到响应，紧跟在状态码后面 -->
-                <span class="flat-duration">{{ formatDuration(durationOf(item)) }}</span>
-                <span class="flat-method">{{ item.method }}</span>
+                <!-- ① 序号（含标记星标；星标槽固定宽度，避免标记后整行右移） -->
+                <span class="flat-group flat-group-index">
+                  <span class="flat-index">{{ item.no }}</span>
+                  <span class="flat-mark-slot">
+                    <a-tooltip v-if="networkStore.isMarked(item.id)">
+                      <template #title>{{ $t('已标记（清除时会保留）') }}</template>
+                      <StarFilled class="flat-mark" />
+                    </a-tooltip>
+                  </span>
+                </span>
+                <!-- ② 状态码 + 耗时 + 方法 -->
+                <span class="flat-group flat-group-meta">
+                  <a-tag v-if="item.loading" class="flat-tag">
+                    <clock-circle-outlined :spin="true" />
+                  </a-tag>
+                  <a-tag v-else class="flat-tag" :color="getStatusCodeKey(item)">
+                    {{ item.statusCode ?? '-' }}
+                  </a-tag>
+                  <!-- 耗时：请求发出 → 收到响应 -->
+                  <span class="flat-duration">{{ formatDuration(durationOf(item)) }}</span>
+                  <span class="flat-method">{{ item.method }}</span>
+                </span>
+                <!-- ③ 接口地址（占满剩余宽度） -->
+                <span class="flat-group flat-group-url">
                 <span class="flat-url" :title="item.url">
                   <!-- 按关键词给命中的片段上色（用的 shortUrl，
                        已隐藏的路径不参与匹配） -->
@@ -653,6 +663,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                     >{{ seg.text }}</span>
                     <template v-else>{{ seg.text }}</template>
                   </template>
+                </span>
                 </span>
                 </div>
               </a-dropdown>
@@ -1019,7 +1030,8 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 .flat-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  /* 组间距（三组之间），比组内的 6px 明显大一些，视觉上分成三块 */
+  gap: 14px;
   padding: 4px 6px;
   /* 命中关键词时这个左边框会染成关键词色（默认透明，避免宽度跳动） */
   border-left: 3px solid transparent;
@@ -1036,6 +1048,40 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 .flat-item-selected:hover {
   background-color: var(--color-main);
   color: var(--color-background);
+}
+
+/* 三组：序号 / 状态码+耗时+方法 / 接口地址。
+   组内用小间距，组间用 .flat-item 的 gap，这样一眼能看出分组 */
+.flat-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 序号组自己固定宽度，保证第二组起点一致 */
+.flat-group-index {
+  flex-shrink: 0;
+}
+
+/* 第二组各列自己就是固定宽度的，不让它被压缩 */
+.flat-group-meta {
+  flex-shrink: 0;
+}
+
+/* 第三组占满剩余宽度，长地址自己截断 */
+.flat-group-url {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 星标槽：不管有没有标记都占同样宽度，避免标记后整行右移 */
+.flat-mark-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
 }
 
 /* 耗时：固定宽度 + 左对齐。
