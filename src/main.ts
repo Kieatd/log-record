@@ -11,7 +11,11 @@ import path from 'path';
 import serverClient from './server';
 import { checkForUpgrade } from './utils/update';
 import { name, author, version } from '../package.json';
-import { getIPAddress } from './utils/node-strings';
+import {
+  getIPAddress,
+  getIPAddressInfo,
+  getIPAddressList,
+} from './utils/node-strings';
 import { loadWindowState, saveWindowState } from './utils/window-state';
 import started from 'electron-squirrel-startup';
 
@@ -68,6 +72,10 @@ const createWindow = () => {
 
   ipcMain.handle('toggleDevTools', () => mainWindow.webContents.openDevTools());
   ipcMain.handle('getIPAddress', () => getIPAddress());
+  // 候选地址：网卡名字判断不可能覆盖所有厂商，连不上时让用户能换一个试
+  ipcMain.handle('getIPAddressList', () => getIPAddressList());
+  // 可用地址 + 被排除的地址：界面上始终展示，方便确认「是不是把真网卡排除了」
+  ipcMain.handle('getIPAddressInfo', () => getIPAddressInfo());
   ipcMain.handle('startScanPhone', () => {
     serverClient.scanPhone((model, clientIP) => {
       mainWindow.webContents.send('service:msg', model, clientIP);

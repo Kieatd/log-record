@@ -89,6 +89,16 @@ export default {
   连接说明: 'Connection Instructions',
   '1. 请在需要调试的手机上写上这个 IP 地址：':
     '1. Enter this IP address on the phone you want to debug: ',
+  '（推荐）':
+    ' (recommended)',
+  '已排除（虚拟网卡或 VPN，手机连不上）：':
+    'Excluded (virtual NIC / VPN, phone cannot reach):',
+  '全部 IP':
+    'All IPs',
+  '点击即可复制：':
+    'Click to copy:',
+  '4. Windows 首次运行若弹出防火墙提示，请选择「允许访问」，否则手机连不上。':
+    '4. On Windows, if a firewall prompt appears on first run, choose "Allow access", otherwise the phone cannot connect.',
   '2. 请保证你调试的手机和这个 ip 地址处于同一个局域网；':
     "2. Ensure that the phone you're debugging and this IP address are on the same local network;",
   '3. 如果还是不行，请检查你手机/电脑是否开了代理，如果有请先关闭。':

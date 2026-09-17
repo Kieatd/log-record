@@ -5,6 +5,12 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   getIPAddress: () => ipcRenderer.invoke('getIPAddress'),
+  getIPAddressList: (): Promise<string[]> =>
+    ipcRenderer.invoke('getIPAddressList'),
+  getIPAddressInfo: (): Promise<{
+    usable: string[];
+    excluded: { address: string; name: string }[];
+  }> => ipcRenderer.invoke('getIPAddressInfo'),
   onGetLogMsg: (callback: any) =>
     ipcRenderer.on('log:msg', (_event, value) => callback(value)),
   onGetNetworkMsg: (callback: any) =>

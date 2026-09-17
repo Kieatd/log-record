@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { CheckCircleOutlined, PauseCircleFilled, PlayCircleFilled, SettingOutlined } from '@ant-design/icons-vue';
+import { CheckCircleOutlined, DownOutlined, PauseCircleFilled, PlayCircleFilled, SettingOutlined } from '@ant-design/icons-vue';
 import { version } from '../../../package.json';
+import { message } from 'ant-design-vue';
 import useAppStore from '@/stores/app';
 import { useI18n } from 'vue-i18n';
 
@@ -12,6 +13,12 @@ const openUpdate = ref(false);
 const isShowConnect = ref(false);
 const i18n = useI18n();
 const ip = ref('');
+// 所有可能的局域网地址（第一个是推荐值）。网卡名字判断不可能覆盖所有厂商的
+// 虚拟网卡（VPN / 虚拟机 / WSL…），所以留一个「换一个试试」的出口。
+const ipList = ref<string[]>([]);
+// 被排除掉的地址（虚拟网卡 / VPN）：界面上也列出来，
+// 万一判断规则把真实网卡误杀了，用户能看出来
+const excludedIps = ref<{ address: string; name: string }[]>([]);
 const funcs = reactive([
   {
     // @ts-ignore
@@ -46,8 +53,22 @@ window.electronAPI.onScanPhone((model, clientIP) => {
 onMounted(async () => {
   const tempIp = await window.electronAPI.getIPAddress();
   ip.value = tempIp;
+  const info = await window.electronAPI.getIPAddressInfo();
+  ipList.value = info?.usable ?? [];
+  excludedIps.value = info?.excluded ?? [];
   window.electronAPI.startScanPhone();
 });
+
+const copyIp = async (value: string) => {
+  try {
+    await navigator.clipboard.writeText(value);
+    message.info(i18n.t('复制成功'));
+  } catch (error) {
+    message.warning(i18n.t('复制失败'));
+    console.warn('复制 IP 失败', error);
+  }
+};
+
 
 const onSwapFunc = (path: string) => {
   const lastPath = router.currentRoute.value.path;
@@ -210,8 +231,42 @@ const onPauseOrPlay = (clientIP: string) => {
         <template v-else>
           <p>
             {{ $t('1. 请在需要调试的手机上写上这个 IP 地址：') }}
-            <span class="ip">{{ ip }}</span>
+            <span class="ip" @click="copyIp(ip)">{{ ip }}</span>
+            <!-- 有多个候选地址时才出现：点开列出全部，点其中一个即复制 -->
+            <a-popover
+              v-if="ipList.length > 1"
+              trigger="click"
+              placement="bottomLeft"
+            >
+              <template #content>
+                <div class="ip-picker">
+                  <div class="ip-picker-tip">{{ $t('点击即可复制：') }}</div>
+                  <div
+                    v-for="(item, index) in ipList"
+                    :key="item"
+                    class="ip-picker-item"
+                    @click="copyIp(item)"
+                  >
+                    <span class="ip-picker-address">{{ item }}</span>
+                    <span v-if="index === 0" class="ip-picker-recommend">
+                      {{ $t('（推荐）') }}
+                    </span>
+                  </div>
+                  <div v-if="excludedIps.length > 0" class="ip-picker-excluded">
+                    {{ $t('已排除（虚拟网卡或 VPN，手机连不上）：') }}
+                    <div v-for="item in excludedIps" :key="item.address">
+                      {{ item.address }}（{{ item.name }}）
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <a-button class="ip-picker-btn" type="text" size="small">
+                <template #icon><DownOutlined /></template>
+                {{ $t('全部 IP') }}
+              </a-button>
+            </a-popover>
           </p>
+
           <p>
             {{ $t('2. 请保证你调试的手机和这个 ip 地址处于同一个局域网；') }}
           </p>
@@ -222,6 +277,13 @@ const onPauseOrPlay = (clientIP: string) => {
               )
             }}
           </p>
+          <p>
+            {{
+              $t(
+                '4. Windows 首次运行若弹出防火墙提示，请选择「允许访问」，否则手机连不上。',
+              )
+            }}
+          </p>
         </template>
       </a-modal>
     </div>
@@ -229,6 +291,51 @@ const onPauseOrPlay = (clientIP: string) => {
 </template>
 
 <style scoped>
+/* 「全部 IP」按钮：跟在地址后面，做小做淡，不抢视线 */
+.ip-picker-btn {
+  height: 22px;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--color-main);
+}
+
+/* 弹层内容：一行一个地址，点了即复制 */
+.ip-picker {
+  min-width: 190px;
+  font-size: 13px;
+}
+
+.ip-picker-tip {
+  margin-bottom: 6px;
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.ip-picker-item {
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: Monaco, Menlo, Consolas, monospace;
+}
+
+.ip-picker-item:hover {
+  background-color: rgba(51, 102, 102, 0.12);
+}
+
+.ip-picker-recommend {
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.ip-picker-excluded {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-scroll);
+  font-size: 12px;
+  opacity: 0.55;
+}
+
 .menu-bar-container {
   display: flex;
   flex-direction: column;
@@ -300,6 +407,7 @@ p {
 
 .ip {
   font-weight: bold;
+  cursor: pointer;
 }
 
 :deep(.ant-popover-inner) {
