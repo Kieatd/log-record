@@ -583,7 +583,6 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                         <template #title>{{ $t('已标记（清除时会保留）') }}</template>
                         <StarFilled class="flat-mark" />
                       </a-tooltip>
-                      <span class="flat-duration">{{ formatDuration(durationOf(networkStore.requests[key] ?? {})) }}</span>
                       <span class="tree-index">{{ arrivalNoOf(key) }}</span>
                       <a-tag v-if="statusCodeKey === 'processing'">
                         <clock-circle-outlined :spin="true" />
@@ -591,6 +590,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                       <a-tag v-else :color="statusCodeKey">
                         {{ statusCode }}
                       </a-tag>
+                      <span class="flat-duration">{{ formatDuration(durationOf(networkStore.requests[key] ?? {})) }}</span>
                       <span>{{ title }}</span>
                     </span>
                   </a-dropdown>
@@ -626,8 +626,6 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   :style="flatItemStyle(item)"
                   @click="networkStore.select([item.id])"
                 >
-                <!-- 耗时：请求发出 → 收到响应，放在序号前面 -->
-                <span class="flat-duration">{{ formatDuration(durationOf(item)) }}</span>
                 <span class="flat-index">{{ item.no }}</span>
                 <a-tooltip v-if="networkStore.isMarked(item.id)">
                   <template #title>{{ $t('已标记（清除时会保留）') }}</template>
@@ -639,6 +637,8 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                 <a-tag v-else class="flat-tag" :color="getStatusCodeKey(item)">
                   {{ item.statusCode ?? '-' }}
                 </a-tag>
+                <!-- 耗时：请求发出 → 收到响应，紧跟在状态码后面 -->
+                <span class="flat-duration">{{ formatDuration(durationOf(item)) }}</span>
                 <span class="flat-method">{{ item.method }}</span>
                 <span class="flat-url" :title="item.url">
                   <!-- 按关键词给命中的片段上色（用的 shortUrl，
@@ -1038,11 +1038,12 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   color: var(--color-background);
 }
 
-/* 耗时：固定宽度 + 右对齐，ms 和 s 混排时序号也能对齐 */
+/* 耗时：固定宽度 + 左对齐。
+   左对齐 + 固定宽度，配合状态标签的固定宽度，后面的方法/地址列就都能对齐 */
 .flat-duration {
   flex-shrink: 0;
   min-width: 48px;
-  text-align: right;
+  text-align: left;
   font-size: 11px;
   opacity: 0.55;
   font-variant-numeric: tabular-nums;
@@ -1087,6 +1088,15 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 
 .flat-tag {
   flex-shrink: 0;
+  /* 固定宽度 + 内容居中。
+     注意：antd 的 tag 默认是 inline-block，光写 justify-content 不生效，
+     得先改成 inline-flex 才能真正居中。
+     固定宽度是因为状态码都是三位、但「等响应」是转圈图标、「-」是一位，
+     宽度不一致会让后面的耗时列左右晃。 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
   font-size: 10px;
   padding-inline: 4px;
   line-height: 14px;
