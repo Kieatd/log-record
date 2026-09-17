@@ -626,24 +626,32 @@ const getStatusCodeKey = (item: Record<string, any>) =>
                   :style="flatItemStyle(item)"
                   @click="networkStore.select([item.id])"
                 >
-                <!-- 第一组（带框）：序号 + 响应码 + 耗时 + 请求方法 -->
+                <!-- 第一组：四个单元格，用竖线分开 -->
                 <span class="flat-group flat-group-meta">
-                  <span class="flat-index">{{ item.no }}</span>
-                  <span class="flat-mark-slot">
-                    <a-tooltip v-if="networkStore.isMarked(item.id)">
-                      <template #title>{{ $t('已标记（清除时会保留）') }}</template>
-                      <StarFilled class="flat-mark" />
-                    </a-tooltip>
+                  <span class="flat-cell flat-cell-index">
+                    <span class="flat-index">{{ item.no }}</span>
+                    <span class="flat-mark-slot">
+                      <a-tooltip v-if="networkStore.isMarked(item.id)">
+                        <template #title>{{ $t('已标记（清除时会保留）') }}</template>
+                        <StarFilled class="flat-mark" />
+                      </a-tooltip>
+                    </span>
                   </span>
-                  <a-tag v-if="item.loading" class="flat-tag">
-                    <clock-circle-outlined :spin="true" />
-                  </a-tag>
-                  <a-tag v-else class="flat-tag" :color="getStatusCodeKey(item)">
-                    {{ item.statusCode ?? '-' }}
-                  </a-tag>
-                  <!-- 耗时：请求发出 → 收到响应 -->
-                  <span class="flat-duration">{{ formatDuration(durationOf(item)) }}</span>
-                  <span class="flat-method">{{ item.method }}</span>
+                  <span class="flat-cell">
+                    <a-tag v-if="item.loading" class="flat-tag">
+                      <clock-circle-outlined :spin="true" />
+                    </a-tag>
+                    <a-tag v-else class="flat-tag" :color="getStatusCodeKey(item)">
+                      {{ item.statusCode ?? '-' }}
+                    </a-tag>
+                  </span>
+                  <span class="flat-cell">
+                    <!-- 耗时：请求发出 → 收到响应 -->
+                    <span class="flat-duration">{{ formatDuration(durationOf(item)) }}</span>
+                  </span>
+                  <span class="flat-cell">
+                    <span class="flat-method">{{ item.method }}</span>
+                  </span>
                 </span>
                 <!-- 第二组：接口地址（占满剩余宽度） -->
                 <span class="flat-group flat-group-url">
@@ -1048,9 +1056,9 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 }
 
 /* 两组：
-     第一组 = 序号 + 响应码 + 耗时 + 请求方法（装在一个框里）
+     第一组 = 序号 | 响应码 | 耗时 | 请求方法（一个框，四格，竖线分开）
      第二组 = 接口地址（占满剩余宽度）
-   组内用小间距，组间用 .flat-item 的 gap（14px），一眼能看出是两块 */
+   组间用 .flat-item 的 gap（14px） */
 .flat-group {
   display: inline-flex;
   align-items: center;
@@ -1058,13 +1066,34 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   min-width: 0;
 }
 
-/* 第一组：带框，四列间距 6px；各列自己就是固定宽度，不让它被压缩 */
+/* 第一组：外框 + 内部四格，格子之间用竖线分。
+   注意 gap 设成 0 —— 分隔线就是格子边界，再留间距会把框撑宽 */
 .flat-group-meta {
-  flex-shrink: 0;
-  padding: 1px 7px;
+  flex: 0 0 auto;
+  gap: 0;
+  padding: 0;
   border: 1px solid var(--color-scroll);
   border-radius: var(--border-radius-default);
   background-color: rgba(51, 102, 102, 0.06);
+  /* 让圆角裁掉格子自己的直角 */
+  overflow: hidden;
+}
+
+/* 单个格子：内容居中，右侧一条分隔线，最后一格不要线 */
+.flat-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  border-right: 1px solid var(--color-scroll);
+}
+
+.flat-cell:last-child {
+  border-right: 0;
+}
+
+.flat-cell-index {
+  gap: 0;
 }
 
 /* 选中行是深色底，框的颜色要跟着反过来，否则看不清 */
@@ -1084,7 +1113,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
+  width: 12px;
   flex-shrink: 0;
 }
 
@@ -1092,7 +1121,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
    左对齐 + 固定宽度，配合状态标签的固定宽度，后面的方法/地址列就都能对齐 */
 .flat-duration {
   flex-shrink: 0;
-  min-width: 48px;
+  min-width: 36px;
   text-align: left;
   font-size: 11px;
   opacity: 0.55;
@@ -1114,8 +1143,8 @@ const getStatusCodeKey = (item: Record<string, any>) =>
 
 .flat-index {
   flex-shrink: 0;
-  min-width: 30px;
-  text-align: right;
+  min-width: 18px;
+  text-align: center;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   opacity: 0.45;
@@ -1146,9 +1175,9 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px;
+  min-width: 28px;
   font-size: 10px;
-  padding-inline: 4px;
+  padding-inline: 3px;
   line-height: 14px;
   margin-inline-end: 0;
 }
@@ -1157,7 +1186,7 @@ const getStatusCodeKey = (item: Record<string, any>) =>
   flex-shrink: 0;
   /* 固定宽度：POST(4字符) 和 GET(3字符) 宽度不同的话，
      框的右边缘就会跟着变，框里的四列也就对不齐了 */
-  min-width: 48px;
+  min-width: 32px;
   text-align: left;
   font-size: 11px;
   font-weight: 600;
