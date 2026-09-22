@@ -7,6 +7,10 @@
 
 [中文](./docs/README.zh-CN.md) | English
 
+> **This repository is a fork of [wutiange/log-record](https://github.com/wutiange/log-record).**
+> Upstream behaviour is kept as-is; a set of day-to-day debugging features has been
+> added on top — see [Section 4](#4-enhancements-in-this-fork) for the full list.
+
 ## 1. Introduction
 
 A system designed for viewing logs in Release environment. This system was developed to address several specific issues encountered during actual development:
@@ -30,7 +34,7 @@ Before using the logging system, you need to integrate [log-listener-plugin](htt
 
 Taking `macos` as an example. First, visit this website to download the corresponding version of the software, preferably the latest version as it fixes many previous bugs:
 
-<https://github.com/wutiange/log-record/releases>
+<https://github.com/Kieatd/log-record/releases>
 
 ![](../images/docs/1729170936543.jpg)
 
@@ -80,7 +84,44 @@ Where `level` represents the reported field name and `warn` represents the corre
 
 Discovery feature is now supported, refer to [Using Discovery Feature for Log Reporting v1.2.x](docs/1.2.x.en.md) for details.
 
-## 4. Roadmap
+## 4. Enhancements in this fork
+
+Upstream functionality is untouched. Everything below was added because it was needed
+while actually debugging with this tool every day.
+
+### 4.1 Network request list
+
+| Feature | Description |
+| --- | --- |
+| **Mark a request** | Right-click a row → *Mark*. Marked rows survive "clear", so you can keep the few endpoints you care about while wiping the noise. Quick double-click the clear button to clear everything **including** marks. |
+| **Duration** | Every row shows how long the request took (sent → response received), e.g. `123ms` / `2.50s`. Rows still waiting for a response show nothing. |
+| **Column layout** | Index / status / duration / method are grouped into one framed box with a divider between cells; the URL sits outside and takes the remaining width. |
+| **Keyword highlight** | Colour-code rows by keyword rules. Each rule has a checkbox, so you can disable one without deleting its config. |
+| **Ignore rules** | Hide noisy endpoints entirely (a footer shows how many were hidden). |
+| **Path display** | Hide leading path segments so long URLs stay readable. Hidden segments never participate in any matching, and the setting is saved in a domain-independent form. |
+| **Tree / flat view** | One-click switch between a path-grouped tree and a flat, arrival-ordered list. |
+
+### 4.2 Request detail
+
+| Feature | Description |
+| --- | --- |
+| **Body viewer** | Search with highlight, "only matches", expand/collapse all, copy the whole body, double-click a node to copy its value. The same component is used for the request body, the response body and the re-request result. |
+| **Re-send request** | Edit the request headers (values only — the field names stay as they were) and the request body, then send it again from the desktop and see the result inline. The request is issued by the Electron main process, so there are no CORS restrictions, and the result block uses the same layout as the response block. |
+| **Copy helpers** | One-click copy for request parameters and for request/response bodies. |
+
+### 4.3 Connection
+
+| Feature | Description |
+| --- | --- |
+| **LAN IP in the title bar** | Displayed next to the title, click to copy. |
+| **All IPs picker** | *Settings → Connection help* lists **every** candidate address (recommended one first) so you can try another when the first one does not work, and also shows which addresses were **excluded** (virtual NIC / VPN). This prevents showing something like a `10.8.0.x` VPN address that a phone can never reach. |
+| **Troubleshooting tips** | Reminders about proxy/VPN software and the Windows Firewall prompt. |
+
+### 4.4 Window
+
+Window size and position, and the split-pane width, are remembered between launches.
+
+## 5. Roadmap
 
 - [x] Optimize performance for large log volumes (1.0.6);
 - [x] Improve log search functionality (1.0.6);
