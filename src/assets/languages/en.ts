@@ -175,4 +175,10 @@ export default {
   '已开启': 'On',
   '已开启，但当前没插电，暂时不生效': 'On, but not plugged in so it has no effect right now',
   '安装后自动打开': 'Open it after install',
+  '准备中…': 'Preparing…',
+  '已用': 'elapsed',
+  '取消安装': 'Cancel',
+  '秒': 's',
+  '分': 'm',
+  '已请求取消安装': 'Cancel requested',
 };

@@ -79,6 +79,18 @@ const busyWifi = ref(false);
 const customCmd = ref('');
 const busyCustom = ref(false);
 
+interface InstallProgressState {
+  phase: 'push' | 'install' | 'done';
+  percent: number;
+  bytes: number;
+  total: number;
+  text: string;
+}
+/** 安装进度：push 阶段有百分比，pm install 阶段只有文字 */
+const installState = ref<InstallProgressState | null>(null);
+const installElapsed = ref(0);
+let installTimer: ReturnType<typeof setInterval> | null = null;
+
 const stayAwake = ref<StayAwakeState | null>(null);
 const busyStayOn = ref(false);
 
@@ -148,8 +160,11 @@ async function loadStayAwake() {
   stayAwake.value = res.state;
 }
 
-async function toggleStayAwake() {
+async function toggleStayAwake(e?: MouseEvent) {
   if (!ready.value) return;
+  // 开关自己点一下就够了，别让事件再冒泡到磁贴又切一次（那样会兜回原状态）
+  const target = e?.target as HTMLElement | null;
+  if (target?.closest('.tile-guard')) return;
   busyStayOn.value = true;
   const next = !stayAwake.value?.on;
   try {
@@ -182,19 +197,57 @@ async function resetAdb() {
 
 /* ---------------- 安装 apk ---------------- */
 
+function startInstallTimer() {
+  installElapsed.value = 0;
+  stopInstallTimer();
+  installTimer = setInterval(() => {
+    installElapsed.value += 1;
+  }, 1000);
+}
+
+function stopInstallTimer() {
+  if (installTimer !== null) {
+    clearInterval(installTimer);
+    installTimer = null;
+  }
+}
+
+const elapsedText = computed(() => {
+  const s = installElapsed.value;
+  if (s < 60) return `${s} ${i18n.t('秒')}`;
+  return `${Math.floor(s / 60)} ${i18n.t('分')} ${String(s % 60).padStart(2, '0')} ${i18n.t('秒')}`;
+});
+
+const mbText = computed(() => {
+  const st = installState.value;
+  if (!st || !st.total) return '';
+  return `${(st.bytes / 1024 / 1024).toFixed(1)} / ${(st.total / 1024 / 1024).toFixed(1)} MB`;
+});
+
+async function cancelInstall() {
+  if (!installTaskId.value) return;
+  await api.adbCancelInstall(installTaskId.value);
+  pushLog(i18n.t('已请求取消安装'), 'err');
+}
+
+const installTaskId = ref('');
+
 async function installApk(apkPath: string) {
   if (!apkPath) {
     message.warning(i18n.t('没拿到文件路径，请用「点击选择」'));
     return;
   }
   const name = apkPath.split(/[\\/]/).pop() || apkPath;
-  pushLog(`$ adb -s ${currentSerial.value} install -r -d -g ${name}`, 'info');
+  pushLog(`$ adb -s ${currentSerial.value} push ${name} → /data/local/tmp/`, 'info');
+  installTaskId.value = `install-${Date.now()}`;
+  installState.value = null;
   installing.value = true;
+  startInstallTimer();
   try {
     const res = await api.adbInstall(
       apkPath,
       currentSerial.value,
-      'install',
+      installTaskId.value,
       autoOpen.value,
     );
     pushLog(res.message, res.ok ? 'ok' : 'err');
@@ -202,7 +255,28 @@ async function installApk(apkPath: string) {
     else message.error(res.message);
   } finally {
     installing.value = false;
+    installState.value = null;
+    stopInstallTimer();
   }
+}
+
+/** 安装进度事件（主进程推过来的） */
+function onInstallProgress(p: InstallProgressState) {
+  // 结束后清掉，否则磁贴会一直停在上次的进度上
+  if (p.phase === 'done') {
+    installState.value = null;
+    return;
+  }
+  installState.value = p;
+}
+
+/** 点磁贴安装，但要是点在勾选框上就别装 */
+function onInstallTileClick(e: MouseEvent) {
+  if (!ready.value || installing.value) return;
+  // 勾选框 / 开关这类小控件不该吃掉磁贴的手势，反过来磁贴也别抢它们的点击
+  const target = e.target as HTMLElement | null;
+  if (target?.closest('.tile-guard')) return;
+  pickAndInstall();
 }
 
 async function pickAndInstall() {
@@ -361,6 +435,9 @@ onMounted(async () => {
   if (api.onAdbOutput) {
     api.onAdbOutput((payload: { text: string }) => pushLog(payload.text));
   }
+  if (api.onAdbProgress) {
+    api.onAdbProgress((payload: InstallProgressState) => onInstallProgress(payload));
+  }
   await loadAdb();
   await loadDevices();
   await loadStayAwake();
@@ -495,24 +572,47 @@ function deviceSubtitle(d: AdbDevice) {
         @dragover="onDragOver"
         @dragleave="onDragLeave"
         @drop="onDrop"
-        @click="ready && pickAndInstall()"
+        @click="onInstallTileClick"
       >
         <div class="tile-icon">
           <LoadingOutlined v-if="installing" spin />
           <AppstoreAddOutlined v-else />
         </div>
         <div class="tile-title">{{ $t('安装应用') }}</div>
-        <div class="tile-desc">
-          {{ dragging ? $t('松手就开始安装') : $t('把 .apk 拖到这里，或点击选择') }}
-        </div>
-        <a-checkbox
-          v-model:checked="autoOpen"
-          class="tile-check"
-          :disabled="!ready"
-          @click.stop
-        >
-          {{ $t('安装后自动打开') }}
-        </a-checkbox>
+
+        <!-- 安装中：显示进度、用时、取消 -->
+        <template v-if="installState">
+          <a-progress
+            v-if="installState.phase === 'push'"
+            :percent="installState.percent"
+            :show-info="false"
+            size="small"
+            class="tile-progress"
+          />
+          <div class="tile-desc">
+            {{ installState?.text || $t('准备中…') }}
+          </div>
+          <div class="tile-desc tile-dim">
+            {{ mbText }} · {{ $t('已用') }} {{ elapsedText }}
+          </div>
+          <a-button size="small" danger class="tile-cancel" @click.stop="cancelInstall">
+            {{ $t('取消安装') }}
+          </a-button>
+        </template>
+
+        <template v-else>
+          <div class="tile-desc">
+            {{ dragging ? $t('松手就开始安装') : $t('把 .apk 拖到这里，或点击选择') }}
+          </div>
+          <!-- 包一层 guard：antd 的 checkbox 根元素是 label，会往内部 input
+               再派发一次 click，事件照样冒泡到磁贴，光在 checkbox 上写
+               @click.stop 拦不住 -->
+          <span class="tile-guard" @click.stop @mousedown.stop>
+            <a-checkbox v-model:checked="autoOpen" class="tile-check" :disabled="!ready">
+              {{ $t('安装后自动打开') }}
+            </a-checkbox>
+          </span>
+        </template>
       </div>
 
       <!-- 截图 -->
@@ -535,18 +635,21 @@ function deviceSubtitle(d: AdbDevice) {
         :class="{ 'tile-disabled': !ready || busyStayOn }"
         @click="toggleStayAwake"
       >
+
         <div class="tile-head">
           <div class="tile-icon">
             <LoadingOutlined v-if="busyStayOn" spin />
             <BulbOutlined v-else />
           </div>
-          <a-switch
-            size="small"
-            :checked="!!stayAwake?.on"
-            :disabled="!ready"
-            :loading="busyStayOn"
-            @click.stop="toggleStayAwake"
-          />
+          <span class="tile-guard" @click.stop @mousedown.stop>
+            <a-switch
+              size="small"
+              :checked="!!stayAwake?.on"
+              :disabled="!ready"
+              :loading="busyStayOn"
+              @click="toggleStayAwake"
+            />
+          </span>
         </div>
         <div class="tile-title">{{ $t('屏幕常亮') }}</div>
         <div class="tile-desc">{{ stayAwakeDesc }}</div>
@@ -864,9 +967,25 @@ function deviceSubtitle(d: AdbDevice) {
 }
 /* 勾选框别跟着磁贴的鼠标手势走，只吃自己的点击 */
 .tile-check {
-  margin-top: 4px;
   font-size: 11px;
   color: #666;
+}
+.tile-guard {
+  display: inline-block;
+  margin-top: 4px;
+}
+.tile-progress {
+  margin: 2px 0 0;
+}
+.tile-progress :deep(.ant-progress-outer) {
+  padding-right: 0;
+}
+.tile-dim {
+  color: #bbb;
+}
+.tile-cancel {
+  margin-top: 4px;
+  align-self: flex-start;
 }
 
 /* ---- 截图 ---- */

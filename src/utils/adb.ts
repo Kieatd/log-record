@@ -557,50 +557,271 @@ export async function openInstalledApp(
   };
 }
 
-/** 安装 APK。返回给用户看的结果文案（成功/失败都尽量说人话） */
+/** 正在跑的安装任务，用来支持取消 */
+const runningInstalls = new Map<string, { child: ReturnType<typeof spawn>; canceled: boolean }>();
+
+/** 取消一个正在跑的安装 */
+export function cancelInstall(taskId: string): boolean {
+  const job = runningInstalls.get(taskId);
+  if (!job) return false;
+  job.canceled = true;
+  try {
+    job.child.kill('SIGKILL');
+  } catch {
+    /* 已经结束了 */
+  }
+  return true;
+}
+
+export interface InstallProgress {
+  /** push=往手机传，install=手机上装，done=结束 */
+  phase: 'push' | 'install' | 'done';
+  /** 0~100，install 阶段没有百分比 */
+  percent: number;
+  bytes: number;
+  total: number;
+  text: string;
+}
+
+const INSTALL_TMP_DIR = '/data/local/tmp';
+/** 传输卡住多久算死掉了 */
+const PUSH_STALL_MS = 120000;
+/** 传输总上限 */
+const PUSH_MAX_MS = 20 * 60 * 1000;
+/** 手机上安装（含 dexopt）的上限 */
+const PM_INSTALL_MAX_MS = 10 * 60 * 1000;
+
+function shellQuote(text: string) {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * 安装 APK。
+ *
+ * 不用 `adb install`：它的 streamed install 在 Android 7~9 的老设备上会
+ * 直接卡死（实测卡了 2 分 51 秒，手机侧临时目录都没建起来，传输 0 字节）。
+ * 改成传统两步：先 push 到 /data/local/tmp，再 pm install，稳定而且能拿进度。
+ */
 export async function installApk(
   file: string,
   apkPath: string,
   options: {
     serial?: string;
-    /** 边跑边回调输出 */
+    taskId?: string;
     onOutput?: (line: string) => void;
-    /** 装成功后自动打开 */
+    onProgress?: (p: InstallProgress) => void;
     autoOpen?: boolean;
   } = {},
-): Promise<{ ok: boolean; message: string; raw: string; opened?: boolean }> {
+): Promise<{
+  ok: boolean;
+  message: string;
+  raw: string;
+  opened?: boolean;
+  canceled?: boolean;
+}> {
+  const { serial, taskId, onOutput, onProgress } = options;
   if (!fs.existsSync(apkPath)) {
     return { ok: false, message: `安装包不存在：${apkPath}`, raw: '' };
   }
-  const args = ['install', '-r', '-d', '-g'];
-  if (options.serial) args.unshift('-s', options.serial);
-  args.push(apkPath);
 
-  const raw = await new Promise<string>((resolve) => {
-    let acc = '';
-    spawnAdbStream(file, args, {
-      onStdout: (c) => {
-        acc += c;
-        options.onOutput?.(c);
-      },
-      onStderr: (c) => {
-        acc += c;
-        options.onOutput?.(c);
-      },
-      onClose: () => resolve(acc),
+  let total = 0;
+  try {
+    total = fs.statSync(apkPath).size;
+  } catch {
+    /* 拿不到就算了，只是没有百分比 */
+  }
+  const apkName = path.basename(apkPath);
+  const remote = `${INSTALL_TMP_DIR}/lr_install_${Date.now()}.apk`;
+  const base = serial ? ['-s', serial] : [];
+
+  const report = (p: InstallProgress) => {
+    onProgress?.(p);
+    if (p.phase !== 'push') onOutput?.(p.text + '\n');
+  };
+
+  // 清掉可能残留的同名临时文件
+  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 15000 });
+
+  /* ---------- 第一步：push ---------- */
+  report({
+    phase: 'push',
+    percent: 0,
+    bytes: 0,
+    total,
+    text: `正在传输 ${apkName}（${(total / 1024 / 1024).toFixed(1)}MB）…`,
+  });
+
+  const pushResult = await new Promise<{ ok: boolean; canceled: boolean; message: string }>(
+    (resolve) => {
+      const child = spawnAdb(file, [...base, 'push', apkPath, remote]);
+      const job = { child, canceled: false };
+      if (taskId) runningInstalls.set(taskId, job);
+
+      let stderr = '';
+      let lastBytes = 0;
+      let lastChange = Date.now();
+      const started = Date.now();
+      let settled = false;
+
+      child.stderr?.on('data', (d) => (stderr += d.toString()));
+
+      // adb push 在管道里不输出进度，只能自己问手机现在收到多少了
+      const timer = setInterval(async () => {
+        if (settled) return;
+        if (Date.now() - lastChange > PUSH_STALL_MS || Date.now() - started > PUSH_MAX_MS) {
+          clearInterval(timer);
+          settled = true;
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* ignore */
+          }
+          resolve({
+            ok: false,
+            canceled: false,
+            message: '传输卡住了（2 分钟没有任何进度），已中止',
+          });
+          return;
+        }
+        const res = await runAdb(
+          file,
+          [...base, 'shell', 'stat', '-c', '%s', remote],
+          { timeout: 8000 },
+        );
+        const size = parseInt((res.stdout || '').trim(), 10);
+        if (!Number.isNaN(size) && size !== lastBytes) {
+          lastBytes = size;
+          lastChange = Date.now();
+          const percent = total ? Math.min(99, Math.round((size / total) * 100)) : 0;
+          report({
+            phase: 'push',
+            percent,
+            bytes: size,
+            total,
+            text: `正在传输 ${percent}%（${(size / 1024 / 1024).toFixed(1)}MB / ${(total / 1024 / 1024).toFixed(1)}MB）`,
+          });
+        }
+      }, 800);
+
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(timer);
+        resolve({ ok: false, canceled: false, message: err.message || String(err) });
+      });
+      child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(timer);
+        if (taskId) runningInstalls.delete(taskId);
+        if (job.canceled) {
+          resolve({ ok: false, canceled: true, message: '已取消安装' });
+          return;
+        }
+        const failedText = /No space left|couldn't create file|device offline|device not found/i.test(stderr);
+        if (code === 0) {
+          resolve({ ok: true, canceled: false, message: '传输完成' });
+        } else if (failedText) {
+          resolve({ ok: false, canceled: false, message: `传到手机失败：${stderr.trim().split('\n')[0]}` });
+        } else {
+          resolve({ ok: false, canceled: false, message: stderr.trim() || `传输失败（退出码 ${code}）` });
+        }
+      });
+    },
+  );
+
+  if (!pushResult.ok) {
+    await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 15000 });
+    report({ phase: 'done', percent: 0, bytes: 0, total, text: pushResult.message });
+    if (taskId) runningInstalls.delete(taskId);
+    return { ok: false, message: pushResult.message, raw: '', canceled: pushResult.canceled };
+  }
+
+  report({
+    phase: 'install',
+    percent: 100,
+    bytes: total,
+    total,
+    text: '传输完成，正在手机上安装（大包会做 dexopt，可能要一会儿）…',
+  });
+
+  /* ---------- 第二步：pm install ---------- */
+  const installRes = await new Promise<{ code: number | null; output: string }>((resolve) => {
+    const child = spawnAdb(file, [
+      ...base,
+      'shell',
+      'pm',
+      'install',
+      '-r',
+      '-d',
+      '-g',
+      remote,
+    ]);
+    const job = { child, canceled: false };
+    if (taskId) runningInstalls.set(taskId, job);
+
+    let output = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+      resolve({ code: null, output: output + '\n安装超时' });
+    }, PM_INSTALL_MAX_MS);
+
+    child.stdout?.on('data', (d) => {
+      output += d.toString();
+      // pm install 一般只在最后输出 Success/Failure，中途有输出就即时透传
+      const text = d.toString().trim();
+      if (text && !/^\s*$/.test(text)) onOutput?.(text + '\n');
+    });
+    child.stderr?.on('data', (d) => (output += d.toString()));
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code: 1, output: output + (err.message || '') });
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, output, canceled: job.canceled } as any);
     });
   });
 
-  const judged = judgeInstall(raw);
-  if (!judged.ok || !options.autoOpen) return { ...judged, raw };
+  if ((installRes as any).canceled) {
+    await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 15000 });
+    if (taskId) runningInstalls.delete(taskId);
+    report({ phase: 'done', percent: 0, bytes: total, total, text: '已取消安装' });
+    return { ok: false, message: '已取消安装', raw: installRes.output, canceled: true };
+  }
 
-  // 装成功了：顺手把它打开
-  const opened = await openInstalledApp(file, apkPath, options.serial);
-  options.onOutput?.(`\n${opened.message}`);
+  /* ---------- 第三步：清理 ---------- */
+  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 15000 });
+  if (taskId) runningInstalls.delete(taskId);
+
+  const judged = judgeInstall(installRes.output);
+  if (!judged.ok) {
+    report({ phase: 'done', percent: 0, bytes: total, total, text: judged.message });
+    return { ok: false, message: judged.message, raw: installRes.output };
+  }
+  report({ phase: 'done', percent: 100, bytes: total, total, text: judged.message });
+
+  if (!options.autoOpen) return { ...judged, raw: installRes.output };
+
+  const opened = await openInstalledApp(file, apkPath, serial);
+  onOutput?.(`\n${opened.message}`);
   return {
     ok: true,
-    message: opened.ok ? `${judged.message}，${opened.message}` : `${judged.message}（${opened.message}）`,
-    raw,
+    message: opened.ok
+      ? `${judged.message}，${opened.message}`
+      : `${judged.message}（${opened.message}）`,
+    raw: installRes.output,
     opened: opened.ok,
   };
 }

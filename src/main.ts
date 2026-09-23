@@ -20,6 +20,7 @@ import {
 } from './utils/node-strings';
 import { loadWindowState, saveWindowState } from './utils/window-state';
 import {
+  cancelInstall,
   connectWifi,
   enableTcpip,
   installApk,
@@ -104,6 +105,9 @@ const createWindow = () => {
 
 
 
+
+
+
   ipcMain.on('openUrl', (_, url) => {
     shell.openExternal(url);
   });
@@ -185,8 +189,17 @@ const createWindow = () => {
       };
       const res = await installApk(info.file, payload.apkPath, {
         serial: payload.serial,
+        taskId: payload.taskId,
         onOutput: send,
         autoOpen: payload.autoOpen,
+        onProgress: (p) => {
+          if (payload.taskId) {
+            mainWindow.webContents.send('adb:progress', {
+              taskId: payload.taskId,
+              ...p,
+            });
+          }
+        },
       });
       return { ok: res.ok, message: res.message };
     },
@@ -217,6 +230,10 @@ const createWindow = () => {
       dataUrl: `data:image/png;base64,${shot.buffer.toString('base64')}`,
     };
   });
+
+  ipcMain.handle('adb:cancelInstall', (_, taskId: string) =>
+    cancelInstall(taskId),
+  );
 
   ipcMain.handle('adb:stayAwake', async (_, serial?: string) => {
     const info = currentAdb();
