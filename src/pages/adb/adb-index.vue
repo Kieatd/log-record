@@ -317,6 +317,25 @@ async function onDrop(e: DragEvent) {
 
 const uninstallOpen = ref(false);
 const pkgList = ref<string[]>([]);
+/** 包名 → 设备上 APK 的路径，读应用名要用 */
+const pkgPaths = ref<Record<string, string>>({});
+/**
+ * 包名 → 应用名。安卓的应用名要从 APK 的 resources.arsc 里解析，
+ * 每个应用要抽两个小文件，所以是后台分批加载 + 本地缓存。
+ */
+const LABELS_KEY = 'Log Record$$appLabels';
+const appLabels = ref<Record<string, string>>(
+  (() => {
+    try {
+      return JSON.parse(localStorage.getItem(LABELS_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  })(),
+);
+const labelProgress = ref({ done: 0, total: 0 });
+const labelLoading = ref(false);
+let labelTimer: ReturnType<typeof setTimeout> | null = null;
 const pkgLoading = ref(false);
 const pkgSearch = ref('');
 const includeSystem = ref(false);
@@ -325,25 +344,85 @@ const uninstallingPkg = ref('');
 
 const filteredPkgs = computed(() => {
   const q = pkgSearch.value.trim().toLowerCase();
-  return q
-    ? pkgList.value.filter((p) => p.toLowerCase().includes(q))
-    : pkgList.value;
+  if (!q) return pkgList.value;
+  // 应用名和包名都能搜，中文应用名也能搜
+  return pkgList.value.filter(
+    (p) =>
+      p.toLowerCase().includes(q) ||
+      (appLabels.value[p] || '').toLowerCase().includes(q),
+  );
 });
+
+function saveLabels() {
+  try {
+    const keys = Object.keys(appLabels.value);
+    // 别让缓存无限长
+    if (keys.length > 800) {
+      const trimmed: Record<string, string> = {};
+      for (const k of keys.slice(-800)) trimmed[k] = appLabels.value[k];
+      appLabels.value = trimmed;
+    }
+    localStorage.setItem(LABELS_KEY, JSON.stringify(appLabels.value));
+  } catch {
+    /* 存不下就算了 */
+  }
+}
+
+/** 后台分批读当前可见列表里还没有应用名的那些 */
+async function loadMissingLabels() {
+  const missing = filteredPkgs.value
+    .filter((p) => !appLabels.value[p] && pkgPaths.value[p])
+    .slice(0, 120);
+  if (!missing.length || labelLoading.value) return;
+
+  labelLoading.value = true;
+  labelProgress.value = { done: 0, total: missing.length };
+  try {
+    for (let i = 0; i < missing.length; i += 6) {
+      const chunk = missing.slice(i, i + 6);
+      const res = await api.adbAppLabels(
+        chunk.map((p) => ({ packageName: p, apkPath: pkgPaths.value[p] })),
+        currentSerial.value,
+      );
+      for (const item of res.labels || []) {
+        if (item.label) appLabels.value[item.packageName] = item.label;
+      }
+      labelProgress.value = {
+        done: Math.min(i + chunk.length, missing.length),
+        total: missing.length,
+      };
+      saveLabels();
+      // 让界面先画出已拿到的部分
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  } finally {
+    labelLoading.value = false;
+  }
+}
 
 async function loadPackages() {
   if (!ready.value) {
     pkgList.value = [];
+    pkgPaths.value = {};
     return;
   }
   pkgLoading.value = true;
   try {
     const res = await api.adbPackages(currentSerial.value, includeSystem.value);
     pkgList.value = res.packages || [];
+    pkgPaths.value = res.paths || {};
     if (!res.ok) pushLog(res.message, 'err');
+    loadMissingLabels();
   } finally {
     pkgLoading.value = false;
   }
 }
+
+// 搜索/切换系统应用后，把新露出来的那些应用名补上
+watch([pkgSearch, includeSystem], () => {
+  if (labelTimer) clearTimeout(labelTimer);
+  labelTimer = setTimeout(loadMissingLabels, 350);
+});
 
 function openUninstall() {
   uninstallOpen.value = true;
@@ -849,6 +928,10 @@ function deviceSubtitle(d: AdbDevice) {
             {{ $t('包含系统应用') }}
           </a-checkbox>
         </a-tooltip>
+        <span v-if="labelLoading" class="un-hint">
+          <LoadingOutlined spin />
+          {{ $t('读取应用名') }} {{ labelProgress.done }}/{{ labelProgress.total }}
+        </span>
       </div>
 
       <div class="un-list">
@@ -860,7 +943,10 @@ function deviceSubtitle(d: AdbDevice) {
           {{ $t('没有匹配的应用') }}
         </div>
         <div v-for="pkg in filteredPkgs" :key="pkg" class="un-item">
-          <span class="un-pkg">{{ pkg }}</span>
+          <div class="un-info">
+            <div class="un-name">{{ appLabels[pkg] || pkg }}</div>
+            <div v-if="appLabels[pkg]" class="un-pkg">{{ pkg }}</div>
+          </div>
           <a-button
             size="small"
             danger
@@ -1170,14 +1256,31 @@ function deviceSubtitle(d: AdbDevice) {
 .un-item:hover {
   background-color: #fafafa;
 }
-.un-pkg {
+.un-info {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
-  font-family: Menlo, Consolas, monospace;
+}
+.un-name {
+  font-size: 13px;
   color: #333;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.un-pkg {
+  font-size: 11px;
+  font-family: Menlo, Consolas, monospace;
+  color: #aaa;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.un-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #999;
   white-space: nowrap;
 }
 .un-empty {

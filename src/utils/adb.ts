@@ -6,6 +6,7 @@
  * Electron 直接用 node 跑测试。
  */
 import { execFileSync, spawn } from 'child_process';
+import { buildStoredZip } from './zip';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -417,20 +418,31 @@ export function parsePackages(output: string): string[] {
  */
 export async function listPackages(
   file: string,
-  options: { serial?: string; includeSystem?: boolean } = {},
-): Promise<{ ok: boolean; message?: string; packages: string[] }> {
-  const args = ['shell', 'pm', 'list', 'packages'];
+  options: { serial?: string; includeSystem?: boolean; withPaths?: boolean } = {},
+): Promise<{
+  ok: boolean;
+  message?: string;
+  packages: string[];
+  paths: Record<string, string>;
+}> {
+  // 带 -f 才能拿到每个应用 APK 的路径，读应用名要用
+  const args = ['shell', 'pm', 'list', 'packages', '-f'];
   if (!options.includeSystem) args.push('-3');
   if (options.serial) args.unshift('-s', options.serial);
-  const res = await runAdb(file, args, { timeout: 30000 });
+  const res = await runAdb(file, args, { timeout: 40000 });
   if (res.code !== 0) {
     return {
       ok: false,
       message: (res.stderr || res.stdout || '读取应用列表失败').trim(),
       packages: [],
+      paths: {},
     };
   }
-  return { ok: true, packages: parsePackages(res.stdout) };
+  const paths = parsePackagePaths(res.stdout);
+  const packages = Object.keys(paths).length
+    ? Object.keys(paths).sort((a, b) => a.localeCompare(b))
+    : parsePackages(res.stdout);
+  return { ok: true, packages, paths };
 }
 
 /**
@@ -498,6 +510,157 @@ export async function uninstallApp(
   const res = await runAdb(file, args, { timeout: 120000 });
   const raw = (res.stdout + res.stderr).trim();
   return { ...judgeUninstall(raw), raw };
+}
+
+/* ------------------------------------------------------------------ */
+/* 读取设备上已装应用的「应用名」                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 应用名藏在 APK 的 resources.arsc 里，而解析 arsc 相当麻烦。
+ * 绕开的办法：用设备上的 unzip 把 AndroidManifest.xml 和 resources.arsc
+ * 两个小文件抽出来（几十 KB ~ 2MB，比整个 APK 小一两个数量级），
+ * 在电脑上拼成一个最小 zip，交给 aapt 去解析。
+ */
+const UNZIP_VARIANTS = [['unzip'], ['toybox', 'unzip'], ['busybox', 'unzip']];
+/** 记住哪个变体能用，避免每次都试一遍 */
+const unzipUsage = new Map<string, string[]>();
+
+/** 抽出来的内容对不对，靠文件头判断 */
+function looksLikeEntry(entry: string, buf: Buffer): boolean {
+  if (buf.length < 4) return false;
+  if (entry === 'AndroidManifest.xml') {
+    // 二进制 XML: 03 00 08 00
+    return buf[0] === 0x03 && buf[1] === 0x00 && buf[2] === 0x08 && buf[3] === 0x00;
+  }
+  if (entry === 'resources.arsc') {
+    // ResTable: 02 00 0c 00
+    return buf[0] === 0x02 && buf[1] === 0x00;
+  }
+  return true;
+}
+
+async function extractApkEntry(
+  file: string,
+  apkPath: string,
+  entry: string,
+  serial?: string,
+): Promise<Buffer | null> {
+  const base = serial ? ['-s', serial] : [];
+  const cached = unzipUsage.get(file);
+  const variants = cached ? [cached, ...UNZIP_VARIANTS.filter((v) => v !== cached)] : UNZIP_VARIANTS;
+
+  for (const cmd of variants) {
+    const res = await runAdbBuffer(
+      file,
+      [...base, 'exec-out', ...cmd, '-p', apkPath, entry],
+      { timeout: 40000 },
+    );
+    if (res.code === 0 && looksLikeEntry(entry, res.buffer)) {
+      unzipUsage.set(file, cmd);
+      return res.buffer;
+    }
+  }
+  return null;
+}
+
+/** 读一个已装应用的信息（应用名 / 版本） */
+export async function readInstalledAppInfo(
+  file: string,
+  aaptFile: string,
+  apkPath: string,
+  options: { serial?: string } = {},
+): Promise<ApkInfo | null> {
+  const manifest = await extractApkEntry(file, apkPath, 'AndroidManifest.xml', options.serial);
+  if (!manifest) return null;
+  const arsc = await extractApkEntry(file, apkPath, 'resources.arsc', options.serial);
+
+  const entries = [{ name: 'AndroidManifest.xml', data: manifest }];
+  if (arsc) entries.push({ name: 'resources.arsc', data: arsc });
+
+  // aapt 只吃文件，所以落到临时目录里用完即删
+  const tmp = path.join(
+    os.tmpdir(),
+    `lr-apk-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.apk`,
+  );
+  try {
+    fs.writeFileSync(tmp, buildStoredZip(entries));
+    const res = runAdbSync(aaptFile, ['dump', 'badging', tmp], 25000);
+    // 有些包 aapt 会先报一条错（比如 manifest 里某个 service 拿不到 AID 分类），
+    // 但 badging 内容照样打在 stdout 里，所以不能因为退出码非 0 就放弃，
+    // 只看能不能解析出内容。
+    if (!res.stdout) return null;
+    return parseBadging(res.stdout);
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* 删不掉就算了 */
+    }
+  }
+}
+
+/** 限制并发地跑一批任务 */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+export interface InstalledAppItem {
+  packageName: string;
+  apkPath: string;
+}
+
+/** 批量读应用名。拿不到的那条 label 为空，界面上退回显示包名 */
+export async function readInstalledAppLabels(
+  file: string,
+  aaptFile: string,
+  items: InstalledAppItem[],
+  options: { serial?: string; onOne?: (pkg: string, label: string) => void } = {},
+): Promise<{ packageName: string; label: string; versionName: string }[]> {
+  return mapLimit(items, 4, async (item) => {
+    const info = await readInstalledAppInfo(file, aaptFile, item.apkPath, {
+      serial: options.serial,
+    });
+    const label = info?.label || '';
+    if (label) options.onOne?.(item.packageName, label);
+    return {
+      packageName: item.packageName,
+      label,
+      versionName: info?.versionName || '',
+    };
+  });
+}
+
+/** 解析 `pm list packages -f` 输出：package:<apk路径>=<包名> */
+export function parsePackagePaths(output: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of output.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith('package:')) continue;
+    const body = t.slice('package:'.length);
+    const eq = body.lastIndexOf('=');
+    if (eq <= 0) continue;
+    const apkPath = body.slice(0, eq);
+    const pkg = body.slice(eq + 1);
+    if (pkg) out[pkg] = apkPath;
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -591,7 +754,8 @@ export function parseBadging(output: string): ApkInfo | null {
 export function readApkInfo(aaptFile: string, apkPath: string): ApkInfo | null {
   if (!aaptFile || !fs.existsSync(apkPath)) return null;
   const res = runAdbSync(aaptFile, ['dump', 'badging', apkPath], 20000);
-  if (res.code !== 0 || !res.stdout) return null;
+  // 同上：退出码非 0 不代表没有可用输出
+  if (!res.stdout) return null;
   return parseBadging(res.stdout);
 }
 

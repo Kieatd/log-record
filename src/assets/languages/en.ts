@@ -193,4 +193,5 @@ export default {
   '确定卸载': 'Uninstall',
   '会保留应用的数据和缓存': 'App data and cache will be kept',
   '应用的数据和缓存会一起删除，不可恢复': 'App data and cache will be deleted, this cannot be undone',
+  '读取应用名': 'Loading app names',
 };
