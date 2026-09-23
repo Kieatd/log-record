@@ -60,6 +60,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbPickApk: () => ipcRenderer.invoke('adb:pickApk'),
   adbPackages: (serial?: string, includeSystem?: boolean) =>
     ipcRenderer.invoke('adb:packages', { serial, includeSystem }),
+  /* ---------------- scrcpy 投屏 / 操控 ---------------- */
+  scrcpyStatus: () => ipcRenderer.invoke('scrcpy:status'),
+  scrcpyStart: (serial?: string, maxSize?: number, maxFps?: number) =>
+    ipcRenderer.invoke('scrcpy:start', { serial, maxSize, maxFps }),
+  scrcpyStop: () => ipcRenderer.invoke('scrcpy:stop'),
+  scrcpyTouch: (payload: {
+    action: 'down' | 'up' | 'move';
+    x: number;
+    y: number;
+    pressure?: number;
+  }) => ipcRenderer.invoke('scrcpy:touch', payload),
+  scrcpyScroll: (payload: {
+    x: number;
+    y: number;
+    scrollX: number;
+    scrollY: number;
+  }) => ipcRenderer.invoke('scrcpy:scroll', payload),
+  scrcpyKey: (keyCode: number, action?: 'down' | 'up' | 'both') =>
+    ipcRenderer.invoke('scrcpy:key', { keyCode, action }),
+  scrcpyText: (text: string) => ipcRenderer.invoke('scrcpy:text', text),
+  scrcpyPower: (on: boolean) => ipcRenderer.invoke('scrcpy:power', on),
+  onScrcpyMeta: (callback: any) =>
+    ipcRenderer.on('scrcpy:meta', (_e, v) => callback(v)),
+  onScrcpyPacket: (callback: any) =>
+    ipcRenderer.on('scrcpy:packet', (_e, v) => callback(v)),
+  onScrcpyLog: (callback: any) => ipcRenderer.on('scrcpy:log', (_e, v) => callback(v)),
+  onScrcpyError: (callback: any) =>
+    ipcRenderer.on('scrcpy:error', (_e, v) => callback(v)),
+  onScrcpyClosed: (callback: any) =>
+    ipcRenderer.on('scrcpy:closed', (_e, v) => callback(v)),
+
   adbAppLabels: (
     items: { packageName: string; apkPath: string }[],
     serial?: string,

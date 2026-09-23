@@ -194,4 +194,13 @@ export default {
   '会保留应用的数据和缓存': 'App data and cache will be kept',
   '应用的数据和缓存会一起删除，不可恢复': 'App data and cache will be deleted, this cannot be undone',
   '读取应用名': 'Loading app names',
+  '投屏操控': 'Mirror & control',
+  '在电脑上看手机画面并直接操作': 'See the phone screen on the PC and control it',
+  '正在启动投屏…': 'Starting mirror…',
+  '等待画面…': 'Waiting for video…',
+  '重新连接': 'Reconnect',
+  '关闭投屏': 'Close mirror',
+  '点一下=轻触，拖动=滑动，滚轮=滚动，方向键/回车可用': 'Click = tap, drag = swipe, wheel = scroll, arrow keys / Enter work',
+  '手机屏幕是黑的（息屏了），投出来就是全黑': 'The phone screen is off, so the mirror is all black',
+  '唤醒屏幕': 'Wake screen',
 };

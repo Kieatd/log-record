@@ -10,6 +10,7 @@ import {
 } from 'vue';
 import { Modal, message } from 'ant-design-vue';
 import { useI18n } from 'vue-i18n';
+import ScrcpyView from './scrcpy-view.vue';
 import {
   ApiOutlined,
   AppstoreAddOutlined,
@@ -17,6 +18,7 @@ import {
   CameraOutlined,
   CheckCircleFilled,
   DeleteOutlined,
+  DesktopOutlined,
   CloseCircleFilled,
   ExclamationCircleFilled,
   LinkOutlined,
@@ -93,6 +95,9 @@ const installState = ref<InstallProgressState | null>(null);
 const installElapsed = ref(0);
 let installTimer: ReturnType<typeof setInterval> | null = null;
 
+const mirrorOpen = ref(false);
+const mirrorRunning = ref(false);
+
 const stayAwake = ref<StayAwakeState | null>(null);
 const busyStayOn = ref(false);
 
@@ -149,6 +154,8 @@ async function loadDevices() {
 
 async function selectDevice(serial: string) {
   if (serial === currentSerial.value) return;
+  // 投屏投的是当前设备，换设备就得先停掉
+  if (mirrorOpen.value) await closeMirror();
   currentSerial.value = serial;
   await loadStayAwake();
 }
@@ -311,6 +318,22 @@ async function onDrop(e: DragEvent) {
     return;
   }
   await installApk(filePath);
+}
+
+/* ---------------- 投屏 ---------------- */
+
+function openMirror() {
+  if (!ready.value) {
+    message.warning(i18n.t('先插上线，选中一台设备'));
+    return;
+  }
+  mirrorOpen.value = true;
+}
+
+async function closeMirror() {
+  await api.scrcpyStop();
+  mirrorRunning.value = false;
+  mirrorOpen.value = false;
 }
 
 /* ---------------- 卸载应用 ---------------- */
@@ -646,6 +669,7 @@ function deviceSubtitle(d: AdbDevice) {
 
 <template>
   <div class="adb-page">
+    <div class="adb-main">
     <!-- ① adb 状态：始终显示，找到就用它，找不到就引导手动指定 -->
     <div class="adb-bar" :class="{ 'adb-bar-bad': adb && !adb.found }">
       <template v-if="adb && adb.found">
@@ -820,6 +844,19 @@ function deviceSubtitle(d: AdbDevice) {
         <div class="tile-desc">{{ stayAwakeDesc }}</div>
       </div>
 
+      <!-- 投屏 -->
+      <div
+        class="tile"
+        :class="{ 'tile-disabled': !ready }"
+        @click="openMirror"
+      >
+        <div class="tile-icon">
+          <DesktopOutlined />
+        </div>
+        <div class="tile-title">{{ $t('投屏操控') }}</div>
+        <div class="tile-desc">{{ $t('在电脑上看手机画面并直接操作') }}</div>
+      </div>
+
       <!-- 无线连接 -->
       <div class="tile tile-wide" :class="{ 'tile-disabled': !ready }">
         <div class="tile-icon"><WifiOutlined /></div>
@@ -853,7 +890,7 @@ function deviceSubtitle(d: AdbDevice) {
       </div>
 
       <!-- 自定义命令 -->
-      <div class="tile tile-wide" :class="{ 'tile-disabled': !ready }">
+      <div class="tile" :class="{ 'tile-disabled': !ready }">
         <div class="tile-icon"><ThunderboltOutlined /></div>
         <div class="tile-title">{{ $t('自定义命令') }}</div>
         <div class="tile-desc">{{ $t('直接跑 adb shell 命令') }}</div>
@@ -974,21 +1011,51 @@ function deviceSubtitle(d: AdbDevice) {
         {{ l.text }}
       </div>
     </div>
+    </div>
+
+    <!-- 右边：投屏面板（只有开着才占位置） -->
+    <div v-if="mirrorOpen" class="adb-side">
+      <ScrcpyView
+        :serial="currentSerial"
+        @log="(t: string) => pushLog(t)"
+        @running="(v: boolean) => (mirrorRunning = v)"
+        @close="closeMirror"
+      />
+    </div>
   </div>
 </template>
 
 <style scoped>
 .adb-page {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  gap: 10px;
   padding: 10px 14px 20px;
-  overflow-y: auto;
   height: 100%;
   /* 父级 .body 是 flex 行容器，不写这行的话页面会按内容宽度收缩，
      右边留一大块空白。width: 0 + flex: 1 是项目里日志页的做法 */
   flex: 1;
   width: 0;
+  overflow: hidden;
+}
+
+/* 左边：原来那些内容，自己滚 */
+.adb-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* 右边：投屏面板。手机是竖屏，340px 宽差不多正好 */
+.adb-side {
+  width: 340px;
+  flex-shrink: 0;
+  height: 100%;
+  min-height: 0;
 }
 
 /* ---- adb 状态行 ---- */

@@ -9,6 +9,16 @@ import {
   screen,
 } from 'electron';
 import fs from 'fs';
+import {
+  injectKey,
+  injectScroll,
+  injectText,
+  injectTouch,
+  isScrcpyRunning,
+  setScreenPower,
+  startScrcpy,
+  stopScrcpy,
+} from './utils/scrcpy';
 import path from 'path';
 import serverClient from './server';
 import { checkForUpgrade } from './utils/update';
@@ -106,6 +116,8 @@ const createWindow = () => {
   ipcMain.handle('checkIsUpdate', () =>
     checkForUpgrade(author.name, name, version),
   );
+
+
 
 
 
@@ -277,6 +289,62 @@ const createWindow = () => {
       });
     },
   );
+
+  /* ---------------- scrcpy 投屏 / 操控 ---------------- */
+
+  // scrcpy-server 随应用打包：开发时在项目 resources/ 下，
+  // 打包后在 asar 里（fs 能直接读 asar 内的文件）
+  const scrcpyServerFile = path.join(
+    app.getAppPath(),
+    'resources',
+    'scrcpy-server.bin',
+  );
+
+  ipcMain.handle('scrcpy:status', () => ({
+    running: isScrcpyRunning(),
+    serverFile: scrcpyServerFile,
+  }));
+
+  ipcMain.handle(
+    'scrcpy:start',
+    async (_, payload: { serial?: string; maxSize?: number; maxFps?: number }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return startScrcpy({
+        serial: payload?.serial,
+        serverFile: scrcpyServerFile,
+        maxSize: payload?.maxSize ?? 1024,
+        maxFps: payload?.maxFps ?? 30,
+        onMeta: (meta) => {
+          mainWindow.webContents.send('scrcpy:meta', meta);
+        },
+        onPacket: (packet) => {
+          // 视频包直接转给渲染进程解码（H.264 裸流，WebCodecs 解）
+          mainWindow.webContents.send('scrcpy:packet', packet);
+        },
+        onLog: (line) => {
+          mainWindow.webContents.send('scrcpy:log', line);
+        },
+        onError: (message) => {
+          mainWindow.webContents.send('scrcpy:error', message);
+        },
+        onClose: (reason) => {
+          mainWindow.webContents.send('scrcpy:closed', reason);
+        },
+      });
+    },
+  );
+
+  ipcMain.handle('scrcpy:stop', async () => {
+    await stopScrcpy();
+    return { ok: true };
+  });
+
+  ipcMain.handle('scrcpy:touch', (_, payload: any) => injectTouch(payload));
+  ipcMain.handle('scrcpy:scroll', (_, payload: any) => injectScroll(payload));
+  ipcMain.handle('scrcpy:key', (_, payload: any) => injectKey(payload));
+  ipcMain.handle('scrcpy:text', (_, text: string) => injectText(text));
+  ipcMain.handle('scrcpy:power', (_, on: boolean) => setScreenPower(on));
 
   ipcMain.handle('adb:cancelInstall', (_, taskId: string) =>
     cancelInstall(taskId),
