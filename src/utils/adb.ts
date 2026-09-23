@@ -394,6 +394,169 @@ export async function listDevices(file: string): Promise<AdbDevice[]> {
 /* 具体动作                                                            */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* 读取 APK 信息 / 启动应用                                            */
+/* ------------------------------------------------------------------ */
+
+export interface ApkInfo {
+  packageName: string;
+  versionName: string;
+  versionCode: string;
+  label: string;
+  /** 启动用的 Activity，aapt 读不到时为空 */
+  launchableActivity: string;
+}
+
+/**
+ * 找一个 aapt。
+ * 从 adb 的路径反推 SDK 根目录（adb 一定在 <sdk>/platform-tools/adb），
+ * 再去 <sdk>/build-tools/<版本>/ 里找版本号最大的那个，这样不用用户再配一次。
+ */
+export function findAapt(adbFile: string): string | null {
+  const roots: string[] = [];
+  if (adbFile) {
+    const sdk = path.dirname(path.dirname(adbFile));
+    roots.push(sdk);
+  }
+  if (process.env.ANDROID_HOME) roots.push(process.env.ANDROID_HOME);
+  if (process.env.ANDROID_SDK_ROOT) roots.push(process.env.ANDROID_SDK_ROOT);
+
+  const cmpVersion = (a: string, b: string) => {
+    const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+    const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d) return d;
+    }
+    return 0;
+  };
+
+  for (const root of roots) {
+    const dir = path.join(root, 'build-tools');
+    if (!fs.existsSync(dir)) continue;
+    let versions: string[] = [];
+    try {
+      versions = fs.readdirSync(dir).filter((v) => !v.startsWith('.'));
+    } catch {
+      continue;
+    }
+    versions.sort(cmpVersion).reverse();
+    for (const v of versions) {
+      for (const name of ['aapt', 'aapt2']) {
+        const file = path.join(dir, v, process.platform === 'win32' ? `${name}.exe` : name);
+        if (isExecutable(file)) return file;
+      }
+    }
+  }
+  // 最后看 PATH
+  for (const name of ['aapt', 'aapt2']) {
+    const file = path.join(
+      '',
+      process.platform === 'win32' ? `${name}.exe` : name,
+    );
+    for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+      if (!dir) continue;
+      const f = path.join(dir, file);
+      if (isExecutable(f)) return f;
+    }
+  }
+  return null;
+}
+
+/** 解析 `aapt dump badging` 的输出 */
+export function parseBadging(output: string): ApkInfo | null {
+  const pkg = output.match(/^package: name='([^']*)'(.*)$/m);
+  if (!pkg) return null;
+  const rest = pkg[2];
+  const vn = rest.match(/versionName='([^']*)'/);
+  const vc = rest.match(/versionCode='([^']*)'/);
+  const label = output.match(/^application-label:'([^']*)'/m);
+  const act = output.match(/^launchable-activity: name='([^']*)'/m);
+  return {
+    packageName: pkg[1],
+    versionName: vn ? vn[1] : '',
+    versionCode: vc ? vc[1] : '',
+    label: label ? label[1] : '',
+    launchableActivity: act ? act[1] : '',
+  };
+}
+
+/** 读 APK 的包名 / 版本 / 应用名 */
+export function readApkInfo(aaptFile: string, apkPath: string): ApkInfo | null {
+  if (!aaptFile || !fs.existsSync(apkPath)) return null;
+  const res = runAdbSync(aaptFile, ['dump', 'badging', apkPath], 20000);
+  if (res.code !== 0 || !res.stdout) return null;
+  return parseBadging(res.stdout);
+}
+
+/** 启动应用：优先用 aapt 读到的 Activity，读不到就用 monkey 按 LAUNCHER 拉起来 */
+export async function launchApp(
+  file: string,
+  packageName: string,
+  options: { serial?: string; activity?: string } = {},
+): Promise<{ ok: boolean; message: string; raw: string }> {
+  const base = options.serial ? ['-s', options.serial] : [];
+  const useAmStart = !!options.activity && options.activity.startsWith(packageName);
+
+  const args = useAmStart
+    ? [...base, 'shell', 'am', 'start', '-n', `${packageName}/${options.activity}`]
+    : [...base, 'shell', 'monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '1'];
+
+  const res = await runAdb(file, args, { timeout: 20000 });
+  const raw = (res.stdout + res.stderr).trim();
+  const failed =
+    /Error|Exception|does not exist|No activities found|aborted/i.test(raw) ||
+    res.code !== 0;
+  // monkey 内部走 shell，会先打一堆 "bash arg: xxx"，报错信息在后面，
+  // 不能直接取第一行，否则错误提示变成 "bash arg: -p"
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !/^bash arg:/.test(l));
+  const errLine = lines.find((l) =>
+    /Error|Exception|does not exist|No activities found|aborted/i.test(l),
+  );
+  return {
+    ok: !failed,
+    message: failed ? errLine || lines[0] || '启动失败' : '已打开',
+    raw,
+  };
+}
+
+/**
+ * 安装成功后自动打开刚装的应用。
+ * 抽成独立函数是为了能单独测：不用真的装一次包，也能验证「读包名 → 拉起应用」
+ * 这条路是通的。
+ */
+export async function openInstalledApp(
+  file: string,
+  apkPath: string,
+  serial?: string,
+): Promise<{ ok: boolean; message: string; info: ApkInfo | null }> {
+  const aapt = findAapt(file);
+  if (!aapt) {
+    return {
+      ok: false,
+      message: '没找到 aapt（在 Android SDK 的 build-tools 里），读不出包名，跳过自动打开',
+      info: null,
+    };
+  }
+  const info = readApkInfo(aapt, apkPath);
+  if (!info) {
+    return { ok: false, message: '没读到安装包的包名，跳过自动打开', info: null };
+  }
+  const res = await launchApp(file, info.packageName, {
+    serial,
+    activity: info.launchableActivity,
+  });
+  const name = info.label || info.packageName;
+  return {
+    ok: res.ok,
+    message: res.ok ? `已打开「${name}」` : `打开了「${name}」但失败了：${res.message}`,
+    info,
+  };
+}
+
 /** 安装 APK。返回给用户看的结果文案（成功/失败都尽量说人话） */
 export async function installApk(
   file: string,
@@ -402,8 +565,10 @@ export async function installApk(
     serial?: string;
     /** 边跑边回调输出 */
     onOutput?: (line: string) => void;
+    /** 装成功后自动打开 */
+    autoOpen?: boolean;
   } = {},
-): Promise<{ ok: boolean; message: string; raw: string }> {
+): Promise<{ ok: boolean; message: string; raw: string; opened?: boolean }> {
   if (!fs.existsSync(apkPath)) {
     return { ok: false, message: `安装包不存在：${apkPath}`, raw: '' };
   }
@@ -426,7 +591,18 @@ export async function installApk(
     });
   });
 
-  return { ...judgeInstall(raw), raw };
+  const judged = judgeInstall(raw);
+  if (!judged.ok || !options.autoOpen) return { ...judged, raw };
+
+  // 装成功了：顺手把它打开
+  const opened = await openInstalledApp(file, apkPath, options.serial);
+  options.onOutput?.(`\n${opened.message}`);
+  return {
+    ok: true,
+    message: opened.ok ? `${judged.message}，${opened.message}` : `${judged.message}（${opened.message}）`,
+    raw,
+    opened: opened.ok,
+  };
 }
 
 /** 把 adb install 的失败信息翻译成人话 */

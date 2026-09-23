@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, onUnmounted, ref, nextTick } from 'vue';
+import {
+  computed,
+  nextTick,
+  onActivated,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch,
+} from 'vue';
 import { message } from 'ant-design-vue';
 import { useI18n } from 'vue-i18n';
 import {
@@ -73,6 +81,13 @@ const busyCustom = ref(false);
 
 const stayAwake = ref<StayAwakeState | null>(null);
 const busyStayOn = ref(false);
+
+// 安装后自动打开。这是个「用一次就想一直开着」的选项，所以记住它
+const AUTO_OPEN_KEY = 'Log Record$$adbAutoOpen';
+const autoOpen = ref(localStorage.getItem(AUTO_OPEN_KEY) === '1');
+watch(autoOpen, (v) => {
+  localStorage.setItem(AUTO_OPEN_KEY, v ? '1' : '0');
+});
 
 const currentDevice = computed(
   () => devices.value.find((d) => d.serial === currentSerial.value) || null,
@@ -176,7 +191,12 @@ async function installApk(apkPath: string) {
   pushLog(`$ adb -s ${currentSerial.value} install -r -d -g ${name}`, 'info');
   installing.value = true;
   try {
-    const res = await api.adbInstall(apkPath, currentSerial.value, 'install');
+    const res = await api.adbInstall(
+      apkPath,
+      currentSerial.value,
+      'install',
+      autoOpen.value,
+    );
     pushLog(res.message, res.ok ? 'ok' : 'err');
     if (res.ok) message.success(res.message);
     else message.error(res.message);
@@ -485,6 +505,14 @@ function deviceSubtitle(d: AdbDevice) {
         <div class="tile-desc">
           {{ dragging ? $t('松手就开始安装') : $t('把 .apk 拖到这里，或点击选择') }}
         </div>
+        <a-checkbox
+          v-model:checked="autoOpen"
+          class="tile-check"
+          :disabled="!ready"
+          @click.stop
+        >
+          {{ $t('安装后自动打开') }}
+        </a-checkbox>
       </div>
 
       <!-- 截图 -->
@@ -833,6 +861,12 @@ function deviceSubtitle(d: AdbDevice) {
   gap: 6px;
   margin-top: 6px;
   align-items: center;
+}
+/* 勾选框别跟着磁贴的鼠标手势走，只吃自己的点击 */
+.tile-check {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #666;
 }
 
 /* ---- 截图 ---- */

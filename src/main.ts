@@ -103,6 +103,7 @@ const createWindow = () => {
   );
 
 
+
   ipcMain.on('openUrl', (_, url) => {
     shell.openExternal(url);
   });
@@ -163,7 +164,15 @@ const createWindow = () => {
 
   ipcMain.handle(
     'adb:install',
-    async (_, payload: { apkPath: string; serial?: string; taskId?: string }) => {
+    async (
+      _,
+      payload: {
+        apkPath: string;
+        serial?: string;
+        taskId?: string;
+        autoOpen?: boolean;
+      },
+    ) => {
       const info = currentAdb();
       if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
       const send = (text: string) => {
@@ -177,6 +186,7 @@ const createWindow = () => {
       const res = await installApk(info.file, payload.apkPath, {
         serial: payload.serial,
         onOutput: send,
+        autoOpen: payload.autoOpen,
       });
       return { ok: res.ok, message: res.message };
     },

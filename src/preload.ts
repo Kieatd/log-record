@@ -51,8 +51,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbPick: () => ipcRenderer.invoke('adb:pick'),
   adbSetPath: (adbPath: string) => ipcRenderer.invoke('adb:setPath', adbPath),
   adbDevices: () => ipcRenderer.invoke('adb:devices'),
-  adbInstall: (apkPath: string, serial?: string, taskId?: string) =>
-    ipcRenderer.invoke('adb:install', { apkPath, serial, taskId }),
+  adbInstall: (
+    apkPath: string,
+    serial?: string,
+    taskId?: string,
+    autoOpen?: boolean,
+  ) => ipcRenderer.invoke('adb:install', { apkPath, serial, taskId, autoOpen }),
   adbPickApk: () => ipcRenderer.invoke('adb:pickApk'),
   adbScreencap: (serial?: string) => ipcRenderer.invoke('adb:screencap', serial),
   adbWakeup: (serial?: string) => ipcRenderer.invoke('adb:wakeup', serial),

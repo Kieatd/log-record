@@ -174,4 +174,5 @@ export default {
   '插着电时不让屏幕熄灭': 'Keep the screen on while charging',
   '已开启': 'On',
   '已开启，但当前没插电，暂时不生效': 'On, but not plugged in so it has no effect right now',
+  '安装后自动打开': 'Open it after install',
 };
