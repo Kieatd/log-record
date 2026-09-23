@@ -507,6 +507,97 @@ export async function wakeUp(
   return { ok, message: ok ? '已发送唤醒指令' : (res.stderr || '唤醒失败').trim() };
 }
 
+/* 屏幕常亮（stay_on_while_plugged_in）是个位掩码 */
+export const STAY_ON_BITS = { ac: 1, usb: 2, wireless: 4 } as const;
+
+export interface StayAwakeState {
+  /** 原始位掩码：0=从不，1=AC，2=USB，4=无线，7=全部 */
+  value: number;
+  /** 开关是否打开 */
+  on: boolean;
+  /** 打开时覆盖哪些充电方式 */
+  modes: string[];
+  /** 系统当前实际有没有在保持常亮（mStayOn）。开关开了但没插电时这里是 false */
+  effective: boolean | null;
+  /** 屏幕当前是否亮着 */
+  awake: boolean | null;
+}
+
+/** 把位掩码翻译成人话 */
+export function parseStayOnValue(value: number): { on: boolean; modes: string[] } {
+  const on = value > 0;
+  const modes: string[] = [];
+  if (value & STAY_ON_BITS.ac) modes.push('充电器');
+  if (value & STAY_ON_BITS.usb) modes.push('USB');
+  if (value & STAY_ON_BITS.wireless) modes.push('无线充电');
+  return { on, modes };
+}
+
+/** 读屏幕常亮状态 */
+export async function getStayAwake(
+  file: string,
+  serial?: string,
+): Promise<StayAwakeState> {
+  const base = serial ? ['-s', serial] : [];
+  const [setting, power] = await Promise.all([
+    runAdb(file, [...base, 'shell', 'settings', 'get', 'global', 'stay_on_while_plugged_in'], { timeout: 15000 }),
+    runAdb(file, [...base, 'shell', 'dumpsys', 'power'], { timeout: 15000 }),
+  ]);
+
+  const raw = (setting.stdout + setting.stderr).trim();
+  const value = /^\d+$/.test(raw) ? parseInt(raw, 10) : 0;
+  const { on, modes } = parseStayOnValue(value);
+
+  const powerText = power.stdout + power.stderr;
+  const stayOn = powerText.match(/mStayOn=(true|false)/);
+  const wake = powerText.match(/mWakefulness=(\w+)/);
+
+  return {
+    value,
+    on,
+    modes,
+    effective: stayOn ? stayOn[1] === 'true' : null,
+    awake: wake ? wake[1] === 'Awake' : null,
+  };
+}
+
+/**
+ * 开关屏幕常亮。
+ * 注意 svc power stayon 只管「插电时不熄灭」，不会点亮已经黑掉的屏幕，
+ * 所以打开的时候顺便唤醒一次，否则用户以为没生效。
+ */
+export async function setStayAwake(
+  file: string,
+  on: boolean,
+  serial?: string,
+): Promise<{ ok: boolean; message: string; raw: string; state: StayAwakeState }> {
+  const base = serial ? ['-s', serial] : [];
+  const res = await runAdb(
+    file,
+    [...base, 'shell', 'svc', 'power', 'stayon', on ? 'true' : 'false'],
+    { timeout: 15000 },
+  );
+  const raw = (res.stdout + res.stderr).trim();
+  if (on) {
+    // 顺便点亮屏幕
+    await runAdb(file, [...base, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], {
+      timeout: 15000,
+    });
+  }
+  const state = await getStayAwake(file, serial);
+  const ok = on ? state.on : !state.on;
+  return {
+    ok,
+    message: ok
+      ? on
+        ? `已开启屏幕常亮（${state.modes.join('、') || '插电时'}不熄灭）`
+        : '已关闭屏幕常亮'
+      : raw || '设置失败',
+    raw,
+    state,
+  };
+}
+
 /** 打开无线调试：让手机在 5555 端口监听，之后就能拔线了 */
 export async function enableTcpip(
   file: string,

@@ -23,6 +23,7 @@ import {
   connectWifi,
   enableTcpip,
   installApk,
+  getStayAwake,
   isScreenAwake,
   listDevices,
   loadCustomAdbPath,
@@ -30,6 +31,7 @@ import {
   runAdb,
   saveCustomAdbPath,
   screencap,
+  setStayAwake,
   wakeUp,
 } from './utils/adb';
 import started from 'electron-squirrel-startup';
@@ -99,6 +101,7 @@ const createWindow = () => {
   ipcMain.handle('checkIsUpdate', () =>
     checkForUpgrade(author.name, name, version),
   );
+
 
   ipcMain.on('openUrl', (_, url) => {
     shell.openExternal(url);
@@ -204,6 +207,25 @@ const createWindow = () => {
       dataUrl: `data:image/png;base64,${shot.buffer.toString('base64')}`,
     };
   });
+
+  ipcMain.handle('adb:stayAwake', async (_, serial?: string) => {
+    const info = currentAdb();
+    if (!info.found) {
+      return { ok: false, message: info.error || '没找到 adb', state: null };
+    }
+    return { ok: true, state: await getStayAwake(info.file, serial) };
+  });
+
+  ipcMain.handle(
+    'adb:setStayAwake',
+    async (_, payload: { on: boolean; serial?: string }) => {
+      const info = currentAdb();
+      if (!info.found) {
+        return { ok: false, message: info.error || '没找到 adb', state: null };
+      }
+      return setStayAwake(info.file, payload.on, payload.serial);
+    },
+  );
 
   ipcMain.handle('adb:wakeup', async (_, serial?: string) => {
     const info = currentAdb();

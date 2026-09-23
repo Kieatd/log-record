@@ -56,6 +56,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbPickApk: () => ipcRenderer.invoke('adb:pickApk'),
   adbScreencap: (serial?: string) => ipcRenderer.invoke('adb:screencap', serial),
   adbWakeup: (serial?: string) => ipcRenderer.invoke('adb:wakeup', serial),
+  adbStayAwake: (serial?: string) => ipcRenderer.invoke('adb:stayAwake', serial),
+  adbSetStayAwake: (on: boolean, serial?: string) =>
+    ipcRenderer.invoke('adb:setStayAwake', { on, serial }),
   adbSaveImage: (dataUrl: string, defaultName: string) =>
     ipcRenderer.invoke('adb:saveImage', { dataUrl, defaultName }),
   adbTcpip: (serial?: string, port?: number) =>

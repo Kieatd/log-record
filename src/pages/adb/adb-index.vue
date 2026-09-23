@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import {
   ApiOutlined,
   AppstoreAddOutlined,
+  BulbOutlined,
   CameraOutlined,
   CheckCircleFilled,
   CloseCircleFilled,
@@ -32,6 +33,14 @@ interface AdbInfo {
   error?: string;
 }
 type AdbSource = 'custom' | 'bundled' | 'env' | 'sdk' | 'path' | 'none';
+
+interface StayAwakeState {
+  value: number;
+  on: boolean;
+  modes: string[];
+  effective: boolean | null;
+  awake: boolean | null;
+}
 
 interface AdbDevice {
   serial: string;
@@ -61,6 +70,9 @@ const busyWifi = ref(false);
 
 const customCmd = ref('');
 const busyCustom = ref(false);
+
+const stayAwake = ref<StayAwakeState | null>(null);
+const busyStayOn = ref(false);
 
 const currentDevice = computed(
   () => devices.value.find((d) => d.serial === currentSerial.value) || null,
@@ -103,6 +115,36 @@ async function loadDevices() {
     }
   } finally {
     loadingDevices.value = false;
+  }
+}
+
+async function selectDevice(serial: string) {
+  if (serial === currentSerial.value) return;
+  currentSerial.value = serial;
+  await loadStayAwake();
+}
+
+async function loadStayAwake() {
+  if (!currentSerial.value) {
+    stayAwake.value = null;
+    return;
+  }
+  const res = await api.adbStayAwake(currentSerial.value);
+  stayAwake.value = res.state;
+}
+
+async function toggleStayAwake() {
+  if (!ready.value) return;
+  busyStayOn.value = true;
+  const next = !stayAwake.value?.on;
+  try {
+    const res = await api.adbSetStayAwake(next, currentSerial.value);
+    if (res.state) stayAwake.value = res.state;
+    pushLog(res.message, res.ok ? 'ok' : 'err');
+    if (res.ok) message.success(res.message);
+    else message.error(res.message);
+  } finally {
+    busyStayOn.value = false;
   }
 }
 
@@ -301,11 +343,12 @@ onMounted(async () => {
   }
   await loadAdb();
   await loadDevices();
+  await loadStayAwake();
 });
 
 onActivated(() => {
   // keep-alive 缓存了页面，切回来时刷新一下设备（可能刚插线/刚拔线）
-  loadDevices();
+  loadDevices().then(loadStayAwake);
 });
 
 onUnmounted(() => {
@@ -327,6 +370,15 @@ function stateText(state: string) {
   if (state === 'offline') return i18n.t('离线');
   return state;
 }
+const stayAwakeDesc = computed(() => {
+  const st = stayAwake.value;
+  if (!st) return i18n.t('插着电时不让屏幕熄灭');
+  if (!st.on) return i18n.t('插着电时不让屏幕熄灭');
+  if (st.effective === false) return i18n.t('已开启，但当前没插电，暂时不生效');
+  const modes = st.modes.join('、');
+  return modes ? `${i18n.t('已开启')}（${modes}）` : i18n.t('已开启');
+});
+
 function deviceTitle(d: AdbDevice) {
   return d.model || d.serial;
 }
@@ -392,7 +444,7 @@ function deviceSubtitle(d: AdbDevice) {
         :key="d.serial"
         class="device-card"
         :class="{ 'device-card-active': d.serial === currentSerial }"
-        @click="currentSerial = d.serial"
+        @click="selectDevice(d.serial)"
       >
         <MobileOutlined class="device-icon" />
         <div class="device-info">
@@ -447,6 +499,29 @@ function deviceSubtitle(d: AdbDevice) {
         </div>
         <div class="tile-title">{{ $t('截图') }}</div>
         <div class="tile-desc">{{ $t('截取手机当前画面') }}</div>
+      </div>
+
+      <!-- 屏幕常亮 -->
+      <div
+        class="tile"
+        :class="{ 'tile-disabled': !ready || busyStayOn }"
+        @click="toggleStayAwake"
+      >
+        <div class="tile-head">
+          <div class="tile-icon">
+            <LoadingOutlined v-if="busyStayOn" spin />
+            <BulbOutlined v-else />
+          </div>
+          <a-switch
+            size="small"
+            :checked="!!stayAwake?.on"
+            :disabled="!ready"
+            :loading="busyStayOn"
+            @click.stop="toggleStayAwake"
+          />
+        </div>
+        <div class="tile-title">{{ $t('屏幕常亮') }}</div>
+        <div class="tile-desc">{{ stayAwakeDesc }}</div>
       </div>
 
       <!-- 无线连接 -->
@@ -734,6 +809,11 @@ function deviceSubtitle(d: AdbDevice) {
 .tile-disabled:hover {
   border-color: #d9d9d9;
   box-shadow: none;
+}
+.tile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 .tile-icon {
   font-size: 18px;

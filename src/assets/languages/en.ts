@@ -170,4 +170,8 @@ export default {
   '这里会显示每条命令的输出': 'Output of every command shows up here',
   '选择 adb 文件': 'Pick adb file',
   '重新扫描': 'Rescan',
+  '屏幕常亮': 'Keep screen on',
+  '插着电时不让屏幕熄灭': 'Keep the screen on while charging',
+  '已开启': 'On',
+  '已开启，但当前没插电，暂时不生效': 'On, but not plugged in so it has no effect right now',
 };
