@@ -1,12 +1,14 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   shell,
   nativeTheme,
   Menu,
   screen,
 } from 'electron';
+import fs from 'fs';
 import path from 'path';
 import serverClient from './server';
 import { checkForUpgrade } from './utils/update';
@@ -17,6 +19,19 @@ import {
   getIPAddressList,
 } from './utils/node-strings';
 import { loadWindowState, saveWindowState } from './utils/window-state';
+import {
+  connectWifi,
+  enableTcpip,
+  installApk,
+  isScreenAwake,
+  listDevices,
+  loadCustomAdbPath,
+  resolveAdb,
+  runAdb,
+  saveCustomAdbPath,
+  screencap,
+  wakeUp,
+} from './utils/adb';
 import started from 'electron-squirrel-startup';
 
 if (process.platform === 'win32' && started) app.quit();
@@ -88,6 +103,164 @@ const createWindow = () => {
   ipcMain.on('openUrl', (_, url) => {
     shell.openExternal(url);
   });
+
+  /* ---------------- adb（设备 tab） ---------------- */
+
+  // 手动指定的 adb 路径存 userData/adb.json，和窗口状态一样放主进程
+  const adbPathFile = path.join(app.getPath('userData'), 'adb.json');
+  // 打包后内置的 adb 放在 resources/adb/ 下（还没打进包，先留着位置）
+  const bundledAdbDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'adb')
+    : '';
+
+  const currentAdb = () =>
+    resolveAdb({
+      customPath: loadCustomAdbPath(adbPathFile),
+      bundledDir: bundledAdbDir,
+    });
+
+  ipcMain.handle('adb:info', () => currentAdb());
+
+  // 手动指定：弹系统文件选择框
+  ipcMain.handle('adb:pick', async () => {
+    const exeName = process.platform === 'win32' ? 'adb.exe' : 'adb';
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择 adb 可执行文件',
+      message: `选中 platform-tools 目录里的 ${exeName}`,
+      properties: ['openFile'],
+      filters:
+        process.platform === 'win32'
+          ? [{ name: 'adb', extensions: ['exe'] }]
+          : [{ name: 'adb', extensions: ['*'] }],
+    });
+    if (result.canceled || !result.filePaths.length) {
+      return { canceled: true, info: currentAdb() };
+    }
+    const picked = result.filePaths[0];
+    const info = resolveAdb({ customPath: picked });
+    if (info.found) {
+      saveCustomAdbPath(adbPathFile, picked);
+      return { canceled: false, info };
+    }
+    return { canceled: false, info, error: info.error };
+  });
+
+  // 传空字符串 = 清掉手动指定，回到自动探测
+  ipcMain.handle('adb:setPath', (_, adbPath: string) => {
+    saveCustomAdbPath(adbPathFile, adbPath || '');
+    return currentAdb();
+  });
+
+  ipcMain.handle('adb:devices', async () => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, message: info.error || '没找到 adb', devices: [] };
+    const devices = await listDevices(info.file);
+    return { ok: true, devices };
+  });
+
+  ipcMain.handle(
+    'adb:install',
+    async (_, payload: { apkPath: string; serial?: string; taskId?: string }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      const send = (text: string) => {
+        if (payload.taskId) {
+          mainWindow.webContents.send('adb:output', {
+            taskId: payload.taskId,
+            text,
+          });
+        }
+      };
+      const res = await installApk(info.file, payload.apkPath, {
+        serial: payload.serial,
+        onOutput: send,
+      });
+      return { ok: res.ok, message: res.message };
+    },
+  );
+
+  // 拖进来或点选一个 apk（拖拽走渲染层的 webUtils，这里是点选的后备入口）
+  ipcMain.handle('adb:pickApk', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择安装包',
+      properties: ['openFile'],
+      filters: [{ name: 'Android 安装包', extensions: ['apk'] }],
+    });
+    if (result.canceled || !result.filePaths.length) return { canceled: true };
+    return { canceled: false, apkPath: result.filePaths[0] };
+  });
+
+  ipcMain.handle('adb:screencap', async (_, serial?: string) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+    // 息屏时截出来是全黑的，先说清楚，不然用户以为截图坏了
+    const awake = await isScreenAwake(info.file, serial);
+    const shot = await screencap(info.file, serial);
+    if (!shot.ok) return { ok: false, message: shot.message };
+    return {
+      ok: true,
+      message: '截图成功',
+      screenAwake: awake,
+      dataUrl: `data:image/png;base64,${shot.buffer.toString('base64')}`,
+    };
+  });
+
+  ipcMain.handle('adb:wakeup', async (_, serial?: string) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+    return wakeUp(info.file, serial);
+  });
+
+  // 保存截图到本地
+  ipcMain.handle(
+    'adb:saveImage',
+    async (_, payload: { dataUrl: string; defaultName: string }) => {
+      const result = await dialog.showSaveDialog(mainWindow, {
+        title: '保存截图',
+        defaultPath: payload.defaultName,
+        filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+      });
+      if (result.canceled || !result.filePath) return { canceled: true };
+      const base64 = payload.dataUrl.replace(/^data:image\/\w+;base64,/, '');
+      await fs.promises.writeFile(result.filePath, Buffer.from(base64, 'base64'));
+      return { canceled: false, filePath: result.filePath };
+    },
+  );
+
+  ipcMain.handle(
+    'adb:tcpip',
+    async (_, payload: { serial?: string; port?: number }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return enableTcpip(info.file, payload.serial, payload.port ?? 5555);
+    },
+  );
+
+  ipcMain.handle(
+    'adb:connect',
+    async (_, payload: { address: string; port?: number }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return connectWifi(info.file, payload.address, payload.port ?? 5555);
+    },
+  );
+
+  // 通用 shell（输出面板的「自定义命令」用）
+  ipcMain.handle(
+    'adb:shell',
+    async (_, payload: { command: string; serial?: string }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      const args = ['shell', ...payload.command.split(' ').filter(Boolean)];
+      if (payload.serial) args.unshift('-s', payload.serial);
+      const res = await runAdb(info.file, args, { timeout: 30000 });
+      const output = (res.stdout + res.stderr).trim();
+      return {
+        ok: res.code === 0,
+        message: output || (res.code === 0 ? '执行完成' : '执行失败'),
+      };
+    },
+  );
 
   // 重新请求：由主进程发出去（渲染进程发会受 CORS 限制）
   ipcMain.handle(

@@ -17,6 +17,11 @@ const router = createRouter({
       path: '/network',
       name: 'network',
       component: () => import('../pages/networks/networks-index.vue')
+    },
+    {
+      path: '/adb',
+      name: 'adb',
+      component: () => import('../pages/adb/adb-index.vue')
     }
   ]
 })

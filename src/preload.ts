@@ -1,6 +1,6 @@
 // See the Electron documentation for details on how to use preload scripts:
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
@@ -35,4 +35,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('pause-log', clientIP, isPlay);
   },
   startScanPhone: () => ipcRenderer.invoke('startScanPhone'),
+
+  // Electron 32+ 删掉了 File.path，拖拽进来的文件只能这样拿真实路径
+  getPathForFile: (file: File) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch (err) {
+      console.warn('getPathForFile 失败', err);
+      return '';
+    }
+  },
+
+  /* ---------------- adb（设备 tab） ---------------- */
+  adbInfo: () => ipcRenderer.invoke('adb:info'),
+  adbPick: () => ipcRenderer.invoke('adb:pick'),
+  adbSetPath: (adbPath: string) => ipcRenderer.invoke('adb:setPath', adbPath),
+  adbDevices: () => ipcRenderer.invoke('adb:devices'),
+  adbInstall: (apkPath: string, serial?: string, taskId?: string) =>
+    ipcRenderer.invoke('adb:install', { apkPath, serial, taskId }),
+  adbPickApk: () => ipcRenderer.invoke('adb:pickApk'),
+  adbScreencap: (serial?: string) => ipcRenderer.invoke('adb:screencap', serial),
+  adbWakeup: (serial?: string) => ipcRenderer.invoke('adb:wakeup', serial),
+  adbSaveImage: (dataUrl: string, defaultName: string) =>
+    ipcRenderer.invoke('adb:saveImage', { dataUrl, defaultName }),
+  adbTcpip: (serial?: string, port?: number) =>
+    ipcRenderer.invoke('adb:tcpip', { serial, port }),
+  adbConnect: (address: string, port?: number) =>
+    ipcRenderer.invoke('adb:connect', { address, port }),
+  adbShell: (command: string, serial?: string) =>
+    ipcRenderer.invoke('adb:shell', { command, serial }),
+  onAdbOutput: (callback: any) =>
+    ipcRenderer.on('adb:output', (_event, value) => callback(value)),
 });

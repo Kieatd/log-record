@@ -32,10 +32,17 @@ const funcs = reactive([
     path: '/network',
     text: i18n.t('网络'),
   },
+  {
+    // @ts-ignore
+    img: new URL('../../assets/images/adb.svg', import.meta.url).href,
+    path: '/adb',
+    text: i18n.t('设备'),
+  },
 ]);
 const selectedObj = reactive<Record<string, boolean>>({
   '/log': true,
   '/network': false,
+  '/adb': false,
 });
 
 window.electronAPI.onScanPhone((model, clientIP) => {
