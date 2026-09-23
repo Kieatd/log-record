@@ -8,7 +8,7 @@ import {
   ref,
   watch,
 } from 'vue';
-import { message } from 'ant-design-vue';
+import { Modal, message } from 'ant-design-vue';
 import { useI18n } from 'vue-i18n';
 import {
   ApiOutlined,
@@ -16,6 +16,7 @@ import {
   BulbOutlined,
   CameraOutlined,
   CheckCircleFilled,
+  DeleteOutlined,
   CloseCircleFilled,
   ExclamationCircleFilled,
   LinkOutlined,
@@ -24,6 +25,7 @@ import {
   PlayCircleOutlined,
   ReloadOutlined,
   SaveOutlined,
+  SearchOutlined,
   ThunderboltOutlined,
   UsbOutlined,
   WifiOutlined,
@@ -309,6 +311,79 @@ async function onDrop(e: DragEvent) {
     return;
   }
   await installApk(filePath);
+}
+
+/* ---------------- 卸载应用 ---------------- */
+
+const uninstallOpen = ref(false);
+const pkgList = ref<string[]>([]);
+const pkgLoading = ref(false);
+const pkgSearch = ref('');
+const includeSystem = ref(false);
+const keepData = ref(false);
+const uninstallingPkg = ref('');
+
+const filteredPkgs = computed(() => {
+  const q = pkgSearch.value.trim().toLowerCase();
+  return q
+    ? pkgList.value.filter((p) => p.toLowerCase().includes(q))
+    : pkgList.value;
+});
+
+async function loadPackages() {
+  if (!ready.value) {
+    pkgList.value = [];
+    return;
+  }
+  pkgLoading.value = true;
+  try {
+    const res = await api.adbPackages(currentSerial.value, includeSystem.value);
+    pkgList.value = res.packages || [];
+    if (!res.ok) pushLog(res.message, 'err');
+  } finally {
+    pkgLoading.value = false;
+  }
+}
+
+function openUninstall() {
+  uninstallOpen.value = true;
+  pkgSearch.value = '';
+  loadPackages();
+}
+
+/** 卸载是破坏性的（默认连数据一起删），所以要二次确认 */
+function confirmUninstall(pkg: string) {
+  Modal.confirm({
+    title: `${i18n.t('确定卸载')} ${pkg} ？`,
+    content: keepData.value
+      ? i18n.t('会保留应用的数据和缓存')
+      : i18n.t('应用的数据和缓存会一起删除，不可恢复'),
+    okText: i18n.t('卸载'),
+    okType: 'danger',
+    cancelText: i18n.t('取消'),
+    onOk: () => doUninstall(pkg),
+  });
+}
+
+async function doUninstall(pkg: string) {
+  uninstallingPkg.value = pkg;
+  pushLog(
+    `$ adb -s ${currentSerial.value} shell pm uninstall --user 0 ${keepData.value ? '-k ' : ''}${pkg}`,
+    'info',
+  );
+  try {
+    const res = await api.adbUninstall(pkg, currentSerial.value, keepData.value);
+    if (res.raw && !res.ok) pushLog(res.raw, 'err');
+    pushLog(res.message, res.ok ? 'ok' : 'err');
+    if (res.ok) {
+      message.success(res.message);
+      await loadPackages();
+    } else {
+      message.error(res.message);
+    }
+  } finally {
+    uninstallingPkg.value = '';
+  }
 }
 
 /* ---------------- 截图 ---------------- */
@@ -615,6 +690,17 @@ function deviceSubtitle(d: AdbDevice) {
         </template>
       </div>
 
+      <!-- 卸载应用 -->
+      <div
+        class="tile"
+        :class="{ 'tile-disabled': !ready }"
+        @click="ready && openUninstall()"
+      >
+        <div class="tile-icon"><DeleteOutlined /></div>
+        <div class="tile-title">{{ $t('卸载应用') }}</div>
+        <div class="tile-desc">{{ $t('查看手机上装的应用并卸载') }}</div>
+      </div>
+
       <!-- 截图 -->
       <div
         class="tile"
@@ -742,6 +828,60 @@ function deviceSubtitle(d: AdbDevice) {
         <span class="section-action" @click="logs = []">{{ $t('清空') }}</span>
       </a-tooltip>
     </div>
+    <!-- 卸载：应用列表 -->
+    <a-modal
+      v-model:open="uninstallOpen"
+      :title="$t('卸载应用')"
+      :footer="null"
+      width="520px"
+    >
+      <div class="un-toolbar">
+        <a-input
+          v-model:value="pkgSearch"
+          size="small"
+          allow-clear
+          :placeholder="$t('搜索包名')"
+        >
+          <template #prefix><SearchOutlined /></template>
+        </a-input>
+        <a-tooltip :title="$t('系统应用卸了可能影响手机功能，谨慎操作')">
+          <a-checkbox v-model:checked="includeSystem" @change="loadPackages">
+            {{ $t('包含系统应用') }}
+          </a-checkbox>
+        </a-tooltip>
+      </div>
+
+      <div class="un-list">
+        <div v-if="pkgLoading" class="un-empty">
+          <LoadingOutlined spin />
+          {{ $t('读取中…') }}
+        </div>
+        <div v-else-if="!filteredPkgs.length" class="un-empty">
+          {{ $t('没有匹配的应用') }}
+        </div>
+        <div v-for="pkg in filteredPkgs" :key="pkg" class="un-item">
+          <span class="un-pkg">{{ pkg }}</span>
+          <a-button
+            size="small"
+            danger
+            :loading="uninstallingPkg === pkg"
+            @click="confirmUninstall(pkg)"
+          >
+            {{ $t('卸载') }}
+          </a-button>
+        </div>
+      </div>
+
+      <div class="un-foot">
+        <a-checkbox v-model:checked="keepData">
+          {{ $t('保留数据和应用缓存（-k）') }}
+        </a-checkbox>
+        <span class="un-count">
+          {{ filteredPkgs.length }} / {{ pkgList.length }}
+        </span>
+      </div>
+    </a-modal>
+
     <div ref="logBox" class="adb-log">
       <div v-if="!logs.length" class="log-empty">{{ $t('这里会显示每条命令的输出') }}</div>
       <div v-for="(l, i) in logs" :key="i" class="log-line" :class="'log-' + l.type">
@@ -1002,6 +1142,63 @@ function deviceSubtitle(d: AdbDevice) {
   max-width: 100%;
   border-radius: 4px;
   box-shadow: 0 2px 8px #0000001f;
+}
+
+/* ---- 卸载弹层 ---- */
+.un-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.un-list {
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+}
+.un-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid #f5f5f5;
+}
+.un-item:last-child {
+  border-bottom: 0;
+}
+.un-item:hover {
+  background-color: #fafafa;
+}
+.un-pkg {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-family: Menlo, Consolas, monospace;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.un-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  color: #999;
+  font-size: 12px;
+}
+.un-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+}
+.un-count {
+  color: #bbb;
 }
 
 /* ---- 输出面板 ---- */

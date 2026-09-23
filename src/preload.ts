@@ -58,6 +58,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     autoOpen?: boolean,
   ) => ipcRenderer.invoke('adb:install', { apkPath, serial, taskId, autoOpen }),
   adbPickApk: () => ipcRenderer.invoke('adb:pickApk'),
+  adbPackages: (serial?: string, includeSystem?: boolean) =>
+    ipcRenderer.invoke('adb:packages', { serial, includeSystem }),
+  adbUninstall: (packageName: string, serial?: string, keepData?: boolean) =>
+    ipcRenderer.invoke('adb:uninstall', { packageName, serial, keepData }),
   adbCancelInstall: (taskId: string) =>
     ipcRenderer.invoke('adb:cancelInstall', taskId),
   onAdbProgress: (callback: any) =>

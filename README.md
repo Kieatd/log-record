@@ -121,6 +121,25 @@ while actually debugging with this tool every day.
 
 Window size and position, and the split-pane width, are remembered between launches.
 
+### 4.5 Device (adb)
+
+There is a built-in adb panel, so you can drive the phone from inside the app instead
+of switching to a terminal.
+
+| Feature | Description |
+| --- | --- |
+| **adb auto-detection** | adb is not a system program and its location differs per machine. It is searched in order: manual path → bundled → `ANDROID_HOME` → the platform default SDK paths → `PATH`. Once found it is always invoked by full path. When nothing is found the UI offers a "pick adb file" button and remembers the choice. A manually specified path is authoritative — if it is broken you get an error instead of a silent fallback |
+| **Device list** | Model / brand / Android version / connection type / state, with multi-device switching. Unauthorized devices tell you to tap "Allow USB debugging" on the phone |
+| **Drag an APK to install** | Drop an `.apk` onto the *Install app* tile. Progress percentage, elapsed time and a cancel button are shown; a stalled transfer is aborted after 2 minutes. Optionally open the app right after installing |
+| **Uninstall** | Lists installed apps (third-party by default, system apps optional) with search. Asks for confirmation and can keep data (`-k`) |
+| **Screenshot** | Captures and previews the phone screen, can be saved to the computer. Warns you when the screen is off (the capture would be black) and offers a wake button |
+| **Keep screen on** | Prevents the screen from turning off while charging, and wakes it when enabled. Tells you when it has no effect because the phone is not plugged in |
+| **Wireless debugging** | Enable once while plugged in, then unplug and connect by IP |
+| **Custom command** | Run adb shell commands with the output in the panel below |
+
+Raw output of every command is collected in the output panel at the bottom (green for
+success, red for failure).
+
 ## 5. Roadmap
 
 - [x] Optimize performance for large log volumes (1.0.6);

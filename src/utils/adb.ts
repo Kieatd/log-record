@@ -395,6 +395,112 @@ export async function listDevices(file: string): Promise<AdbDevice[]> {
 /* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
+/* 应用列表 / 卸载                                                     */
+/* ------------------------------------------------------------------ */
+
+/** 解析 `pm list packages` 输出（每行 package:com.xxx.yyy） */
+export function parsePackages(output: string): string[] {
+  const out: string[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const name = t.startsWith('package:') ? t.slice('package:'.length) : t;
+    // 只留像包名的，过滤掉提示文字
+    if (/^[a-zA-Z][\w.]*\.[\w.]+$/.test(name)) out.push(name);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * 列出应用。
+ * includeSystem=false 只列第三方（pm list packages -3），调式时基本只看这些。
+ */
+export async function listPackages(
+  file: string,
+  options: { serial?: string; includeSystem?: boolean } = {},
+): Promise<{ ok: boolean; message?: string; packages: string[] }> {
+  const args = ['shell', 'pm', 'list', 'packages'];
+  if (!options.includeSystem) args.push('-3');
+  if (options.serial) args.unshift('-s', options.serial);
+  const res = await runAdb(file, args, { timeout: 30000 });
+  if (res.code !== 0) {
+    return {
+      ok: false,
+      message: (res.stderr || res.stdout || '读取应用列表失败').trim(),
+      packages: [],
+    };
+  }
+  return { ok: true, packages: parsePackages(res.stdout) };
+}
+
+/**
+ * adb 失败时经常吐一整段 Java 堆栈（比如卸载不存在的包），
+ * 直接拿来做提示会出现 "at android.os.Binder.execTransact(Binder.java:739)"
+ * 这种鬼东西。这里把堆栈行滤掉，只留有意义的内容。
+ */
+export function firstMeaningfulLine(output: string): string {
+  const lines = output
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !/^at\s/.test(l) &&
+        !/^Exception occurred while executing/.test(l) &&
+        !/^\s*Caused by/.test(l),
+    );
+  const failure = lines.find((l) => /Failure \[/.test(l));
+  if (failure) return failure;
+  // java.lang.IllegalArgumentException: Unknown package: com.x → 去掉类名前缀
+  const first = lines[0] || '';
+  const stripped = first.replace(/^[a-z][\w.]*\.[A-Z]\w*Exception:\s*/, '');
+  return stripped || '执行失败';
+}
+
+/** 把 pm uninstall 的输出翻译成人话 */
+export function judgeUninstall(output: string): { ok: boolean; message: string } {
+  const text = output.trim();
+  if (/^Success/m.test(text)) return { ok: true, message: '卸载成功' };
+  const known: [RegExp, string][] = [
+    [/Unknown package|IllegalArgumentException/, '这台设备上没装这个应用（可能已经被卸载了）'],
+    [/DELETE_FAILED_DEVICE_POLICY_MANAGER/, '这个应用是设备管理器，得先去「设置 → 安全 → 设备管理器」里取消勾选才能卸'],
+    [/DELETE_FAILED_INTERNAL_ERROR/, '系统内部错误，卸载失败。部分系统应用不允许卸载'],
+    [/DELETE_FAILED_USER_RESTRICTED/, '系统限制了卸载'],
+    [/DELETE_FAILED_OWNER_BLOCKED/, '应用被设备管理员阻止卸载'],
+    [/not installed for/, '这台设备上没装这个应用'],
+    [/device .* not found|no devices/, '设备断开了'],
+  ];
+  for (const [re, msg] of known) {
+    if (re.test(text)) return { ok: false, message: msg };
+  }
+  if (!text) return { ok: false, message: '卸载失败，没有任何输出' };
+  return { ok: false, message: firstMeaningfulLine(text) };
+}
+
+/**
+ * 卸载应用。
+ *
+ * 一律带 --user 0：不加的话系统应用会直接失败（实测 DELETE_FAILED_INTERNAL_ERROR），
+ * 加了之后系统应用能卸（只对当前用户生效，APK 还在 /system 里，可以 install-existing
+ * 还原），第三方应用在单用户机器上效果和不加一样。
+ * keepData=true 加 -k（保留数据和缓存），默认不保留。
+ */
+export async function uninstallApp(
+  file: string,
+  packageName: string,
+  options: { serial?: string; keepData?: boolean } = {},
+): Promise<{ ok: boolean; message: string; raw: string }> {
+  const args = ['shell', 'pm', 'uninstall', '--user', '0'];
+  if (options.keepData) args.push('-k');
+  args.push(packageName);
+  if (options.serial) args.unshift('-s', options.serial);
+
+  const res = await runAdb(file, args, { timeout: 120000 });
+  const raw = (res.stdout + res.stderr).trim();
+  return { ...judgeUninstall(raw), raw };
+}
+
+/* ------------------------------------------------------------------ */
 /* 读取 APK 信息 / 启动应用                                            */
 /* ------------------------------------------------------------------ */
 
@@ -847,7 +953,7 @@ export function judgeInstall(raw: string): { ok: boolean; message: string } {
     if (re.test(text)) return { ok: false, message: msg };
   }
   if (!text) return { ok: false, message: '安装失败，没有任何输出' };
-  return { ok: false, message: text.split(/\r?\n/).filter(Boolean).pop() || '安装失败' };
+  return { ok: false, message: firstMeaningfulLine(text) };
 }
 
 /** 截图，返回 PNG 的 Buffer */

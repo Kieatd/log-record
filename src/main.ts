@@ -27,12 +27,14 @@ import {
   getStayAwake,
   isScreenAwake,
   listDevices,
+  listPackages,
   loadCustomAdbPath,
   resolveAdb,
   runAdb,
   saveCustomAdbPath,
   screencap,
   setStayAwake,
+  uninstallApp,
   wakeUp,
 } from './utils/adb';
 import started from 'electron-squirrel-startup';
@@ -102,6 +104,7 @@ const createWindow = () => {
   ipcMain.handle('checkIsUpdate', () =>
     checkForUpgrade(author.name, name, version),
   );
+
 
 
 
@@ -230,6 +233,29 @@ const createWindow = () => {
       dataUrl: `data:image/png;base64,${shot.buffer.toString('base64')}`,
     };
   });
+
+  ipcMain.handle(
+    'adb:packages',
+    async (_, payload: { serial?: string; includeSystem?: boolean } = {}) => {
+      const info = currentAdb();
+      if (!info.found) {
+        return { ok: false, message: info.error || '没找到 adb', packages: [] };
+      }
+      return listPackages(info.file, payload);
+    },
+  );
+
+  ipcMain.handle(
+    'adb:uninstall',
+    async (_, payload: { packageName: string; serial?: string; keepData?: boolean }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return uninstallApp(info.file, payload.packageName, {
+        serial: payload.serial,
+        keepData: payload.keepData,
+      });
+    },
+  );
 
   ipcMain.handle('adb:cancelInstall', (_, taskId: string) =>
     cancelInstall(taskId),
