@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, shallowRef } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { CloseOutlined, LoadingOutlined, ReloadOutlined } from '@ant-design/icons-vue';
+import {
+  CloseOutlined,
+  DesktopOutlined,
+  LoadingOutlined,
+  PlayCircleOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons-vue';
 import {
   BitmapVideoFrameRenderer,
   WebCodecsVideoDecoder,
@@ -13,6 +19,7 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'log', text: string): void;
   (e: 'running', value: boolean): void;
+  (e: 'starting', value: boolean): void;
 }>();
 
 const i18n = useI18n();
@@ -249,6 +256,9 @@ function onKeyDown(e: KeyboardEvent) {
 
 let offPacket: (() => void) | null = null;
 
+// 把「正在启动」也告诉父组件，磁贴的开关要显示 loading
+watch(starting, (v) => emit('starting', v));
+
 onMounted(() => {
   if (api.onScrcpyMeta) {
     api.onScrcpyMeta((m: any) => {
@@ -276,7 +286,7 @@ onMounted(() => {
       emit('log', `投屏结束：${reason}`);
     });
   }
-  start();
+  // 这里刻意不自动 start()：面板默认就在，但要不要投由用户点
 });
 
 onUnmounted(() => {
@@ -296,6 +306,9 @@ defineExpose({ stop, start });
       <a-tooltip v-if="running" :title="$t('重新连接')">
         <ReloadOutlined class="sv-icon" @click="stop().then(start)" />
       </a-tooltip>
+      <a-tooltip v-else-if="!starting && !errorText" :title="$t('开始投屏')">
+        <PlayCircleOutlined class="sv-icon" @click="start" />
+      </a-tooltip>
       <a-tooltip :title="$t('关闭投屏')">
         <CloseOutlined class="sv-icon" @click="stop().then(() => emit('close'))" />
       </a-tooltip>
@@ -307,7 +320,23 @@ defineExpose({ stop, start });
         {{ $t('正在启动投屏…') }}
       </div>
       <div v-else-if="errorText" class="sv-tip sv-tip-error">
-        {{ errorText }}
+        <div>{{ errorText }}</div>
+        <a-button size="small" type="primary" @click="start">
+          <PlayCircleOutlined />
+          {{ $t('重试') }}
+        </a-button>
+      </div>
+      <!-- 待机：面板在，但还没开始投 -->
+      <div v-else-if="!running" class="sv-tip sv-idle">
+        <DesktopOutlined class="sv-idle-icon" />
+        <div class="sv-idle-title">{{ $t('还没开始投屏') }}</div>
+        <a-button type="primary" @click="start">
+          <PlayCircleOutlined />
+          {{ $t('开始投屏') }}
+        </a-button>
+        <div class="sv-idle-hint">
+          {{ $t('投屏会在手机上启动一个服务，需要时再开') }}
+        </div>
       </div>
       <!-- 画布一直留着，解码器直接往里画 -->
       <canvas
@@ -410,6 +439,25 @@ defineExpose({ stop, start });
 }
 .sv-tip-error {
   color: #f48771;
+  flex-direction: column;
+}
+.sv-idle {
+  flex-direction: column;
+  gap: 10px;
+}
+.sv-idle-icon {
+  font-size: 34px;
+  color: #555;
+}
+.sv-idle-title {
+  color: #aaa;
+  font-size: 13px;
+}
+.sv-idle-hint {
+  color: #666;
+  font-size: 11px;
+  text-align: center;
+  max-width: 200px;
 }
 .sv-black {
   position: absolute;

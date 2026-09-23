@@ -170,6 +170,7 @@ watch(mirrorOpen, (v) => {
   localStorage.setItem(MIRROR_OPEN_KEY, v ? '1' : '0');
 });
 const mirrorRunning = ref(false);
+const mirrorStarting = ref(false);
 const mirrorRef = ref<{ start: () => void; stop: () => Promise<void> } | null>(null);
 
 const stayAwake = ref<StayAwakeState | null>(null);
@@ -422,24 +423,26 @@ function openMirror() {
   mirrorOpen.value = true;
 }
 
-function toggleMirror() {
-  if (mirrorOpen.value) {
-    closeMirror();
+/**
+ * 磁贴上的开关控制的是「投屏本身」，不是面板显隐：
+ * 面板默认就在（布局需求），要不要投由这里或面板里的按钮决定。
+ */
+async function toggleMirror() {
+  if (!ready.value) {
+    message.warning(i18n.t('先插上线，选中一台设备'));
     return;
   }
-  openMirror();
+  if (mirrorRunning.value) {
+    await mirrorRef.value?.stop();
+    return;
+  }
+  mirrorOpen.value = true; // 面板被关过就顺手放出来
+  await nextTick();
+  mirrorRef.value?.start();
 }
 
-/**
- * 设备就绪 + 面板开着 + 还没在投 → 自动开始。
- * 这条也覆盖「打开应用时手机还没插上，后来才插上」的情况：
- * 设备列表刷新后 ready 变 true，就会自动连上。
- */
-watch([ready, mirrorOpen], async ([isReady, isOpen]) => {
-  if (!isReady || !isOpen) return;
-  await nextTick();
-  if (!mirrorRunning.value) mirrorRef.value?.start();
-});
+// 这里刻意不做「设备就绪就自动投屏」：面板默认在，但投屏必须用户自己点。
+// 否则一插上手机就悄悄在手机上起一个服务，不合适。
 
 async function closeMirror() {
   await api.scrcpyStop();
@@ -1116,7 +1119,7 @@ function deviceSubtitle(d: AdbDevice) {
       <!-- 投屏 -->
       <div
         class="tile"
-        :class="{ 'tile-disabled': !ready, 'tile-on': mirrorOpen }"
+        :class="{ 'tile-disabled': !ready, 'tile-on': mirrorRunning }"
         @click="toggleMirror"
       >
         <div class="tile-head">
@@ -1125,14 +1128,15 @@ function deviceSubtitle(d: AdbDevice) {
           </div>
           <a-switch
             size="small"
-            :checked="mirrorOpen"
+            :checked="mirrorRunning"
             :disabled="!ready"
+            :loading="mirrorStarting"
             @click.stop="toggleMirror"
           />
         </div>
         <div class="tile-title">{{ $t('投屏操控') }}</div>
         <div class="tile-desc">
-          {{ mirrorOpen ? (mirrorRunning ? $t('已连接，右边就是手机画面') : $t('正在连接…')) : $t('在电脑上看手机画面并直接操作') }}
+          {{ mirrorRunning ? $t('已连接，右边就是手机画面') : $t('在电脑上看手机画面并直接操作') }}
         </div>
       </div>
 
@@ -1366,6 +1370,7 @@ function deviceSubtitle(d: AdbDevice) {
         :serial="currentSerial"
         @log="(t: string) => pushLog(t)"
         @running="(v: boolean) => (mirrorRunning = v)"
+        @starting="(v: boolean) => (mirrorStarting = v)"
         @close="closeMirror"
       />
     </div>
