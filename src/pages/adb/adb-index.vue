@@ -985,6 +985,10 @@ function deviceSubtitle(d: AdbDevice) {
   padding: 10px 14px 20px;
   overflow-y: auto;
   height: 100%;
+  /* 父级 .body 是 flex 行容器，不写这行的话页面会按内容宽度收缩，
+     右边留一大块空白。width: 0 + flex: 1 是项目里日志页的做法 */
+  flex: 1;
+  width: 0;
 }
 
 /* ---- adb 状态行 ---- */
@@ -1132,7 +1136,10 @@ function deviceSubtitle(d: AdbDevice) {
 /* ---- 功能磁贴 ---- */
 .tile-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  /* 列宽给大一点（280 起步），宽窗口下正好 4 列：
+     第一行 安装/卸载/截图/屏幕常亮，第二行 无线调试(占2)+自定义命令(占2)，
+     两行都排满，右下角不会空一块 */
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 8px;
 }
 .tile {
