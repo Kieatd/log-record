@@ -292,13 +292,11 @@ const createWindow = () => {
 
   /* ---------------- scrcpy 投屏 / 操控 ---------------- */
 
-  // scrcpy-server 随应用打包：开发时在项目 resources/ 下，
-  // 打包后在 asar 里（fs 能直接读 asar 内的文件）
-  const scrcpyServerFile = path.join(
-    app.getAppPath(),
-    'resources',
-    'scrcpy-server.bin',
-  );
+  // scrcpy-server 随应用打包。asar 里只有 Vite 产物，二进制是用
+  // forge 的 extraResource 单独带出去的，所以打包后要去 resourcesPath 找。
+  const scrcpyServerFile = app.isPackaged
+    ? path.join(process.resourcesPath, 'scrcpy-server.bin')
+    : path.join(app.getAppPath(), 'resources', 'scrcpy-server.bin');
 
   ipcMain.handle('scrcpy:status', () => ({
     running: isScrcpyRunning(),
