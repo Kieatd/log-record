@@ -816,16 +816,21 @@ onMounted(async () => {
   if (api.onAdbProgress) {
     api.onAdbProgress((payload: InstallProgressState) => onInstallProgress(payload));
   }
+  // 截图记录和缩略图跟设备无关，先读 —— 原来排在设备那一串后面，
+  // 而读设备 + 读常亮 + 自动开启常亮要好几秒，结果刚打开时缩略图是空的
+  loadShotCount();
+  loadLatestShot();
   await loadAdb();
   await loadDevices();
   await loadStayAwake();
-  await loadShotCount();
-  await loadLatestShot();
 });
 
 onActivated(() => {
   // keep-alive 缓存了页面，切回来时刷新一下设备（可能刚插线/刚拔线）
   loadDevices().then(loadStayAwake);
+  // 切回来也刷一下截图记录：可能刚截过图或者删过图
+  loadShotCount();
+  loadLatestShot();
 });
 
 onUnmounted(() => {
