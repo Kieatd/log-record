@@ -219,4 +219,6 @@ export default {
   '已删除': 'Deleted',
   '保存失败': 'Save failed',
   '截图成功，但手机息屏了，画面是全黑的': 'Screenshot taken, but the screen is off so it is all black',
+  '新': 'New',
+  '张没看过': 'unseen',
 };

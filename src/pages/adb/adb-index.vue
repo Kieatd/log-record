@@ -82,6 +82,44 @@ const shotsOpen = ref(false);
 const shots = ref<{ name: string; size: number; mtime: number; thumb: string }[]>([]);
 const shotsLoading = ref(false);
 const shotCount = ref(0);
+/** 磁盘上所有截图的文件名 */
+const shotNames = ref<string[]>([]);
+/**
+ * 已经查看过的截图文件名。小红点显示的是「还没看过的张数」，
+ * 看一张少一张，全看完红点就没了。
+ */
+const SEEN_SHOTS_KEY = 'Log Record$$seenShots';
+const seenShots = ref<string[]>(
+  (() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(SEEN_SHOTS_KEY) || '[]');
+      return Array.isArray(v) ? v : [];
+    } catch {
+      return [];
+    }
+  })(),
+);
+const unseenCount = computed(
+  () => shotNames.value.filter((n) => !seenShots.value.includes(n)).length,
+);
+
+function saveSeen() {
+  try {
+    localStorage.setItem(SEEN_SHOTS_KEY, JSON.stringify(seenShots.value));
+  } catch {
+    /* 存不下就算了 */
+  }
+}
+
+function markShotSeen(name: string) {
+  if (!name || seenShots.value.includes(name)) return;
+  seenShots.value = [...seenShots.value, name];
+  saveSeen();
+}
+
+function isShotNew(name: string) {
+  return !seenShots.value.includes(name);
+}
 const viewerOpen = ref(false);
 const viewerUrl = ref('');
 const viewerName = ref('');
@@ -570,7 +608,9 @@ async function takeScreenshot() {
       message.error(res.message);
       return;
     }
-    shotCount.value = res.count ?? shotCount.value + 1;
+    // 必须重新读一遍列表：红点算的是「没看过的张数」，
+    // 得先知道新文件的文件名，光加个计数是没用的
+    await loadShotCount();
     if (res.screenAwake === false) {
       // 还是那个坑：息屏截出来是全黑的，得说清楚
       pushLog(i18n.t('截图成功，但手机是息屏状态，截出来会是全黑的'), 'err');
@@ -597,6 +637,14 @@ async function loadShotCount() {
   try {
     const res = await api.shotsCount();
     shotCount.value = res?.count ?? 0;
+    shotNames.value = res?.names ?? [];
+    // 已经删掉的图片，从「已查看」里也清掉，免得数组越积越长
+    const alive = new Set(shotNames.value);
+    const pruned = seenShots.value.filter((n) => alive.has(n));
+    if (pruned.length !== seenShots.value.length) {
+      seenShots.value = pruned;
+      saveSeen();
+    }
   } catch {
     /* ignore */
   }
@@ -628,6 +676,8 @@ async function viewShot(name: string) {
   viewerUrl.value = res.dataUrl;
   viewerName.value = name;
   viewerOpen.value = true;
+  // 看了就算已读，小红点对应减一
+  markShotSeen(name);
 }
 
 async function saveShotAs(name: string) {
@@ -954,7 +1004,7 @@ function deviceSubtitle(d: AdbDevice) {
           <span class="tile-guard tile-open-guard" @click.stop @mousedown.stop>
             <a-tooltip :title="$t('查看截图记录')">
               <a-badge
-                :count="shotCount"
+                :count="unseenCount"
                 :overflow-count="99"
                 size="small"
                 :offset="[2, -2]"
@@ -1153,7 +1203,12 @@ function deviceSubtitle(d: AdbDevice) {
       width="680px"
     >
       <div class="shots-bar">
-        <span class="shots-count">{{ shotCount }} {{ $t('张') }}</span>
+        <span class="shots-count">
+          {{ shotCount }} {{ $t('张') }}
+          <template v-if="unseenCount">
+            · <span class="shots-unseen">{{ unseenCount }} {{ $t('张没看过') }}</span>
+          </template>
+        </span>
         <a-space :size="6">
           <a-button size="small" @click="wakeUp">
             <ThunderboltOutlined />
@@ -1173,7 +1228,12 @@ function deviceSubtitle(d: AdbDevice) {
         {{ $t('还没有截图') }}
       </div>
       <div v-else class="shots-grid">
-        <div v-for="s in shots" :key="s.name" class="shot-card">
+        <div
+          v-for="s in shots"
+          :key="s.name"
+          class="shot-card"
+          :class="{ 'shot-card-new': isShotNew(s.name) }"
+        >
           <img
             v-if="s.thumb"
             :src="s.thumb"
@@ -1181,6 +1241,7 @@ function deviceSubtitle(d: AdbDevice) {
             @click="viewShot(s.name)"
           />
           <div v-else class="shot-thumb shot-thumb-bad">{{ $t('读不出来') }}</div>
+          <span v-if="isShotNew(s.name)" class="shot-new-dot">{{ $t('新') }}</span>
           <div class="shot-meta">
             <span class="shot-name" :title="s.name">{{ s.name }}</span>
             <span class="shot-sub">{{ shotTime(s.mtime) }} · {{ shotSize(s.size) }}</span>
@@ -1530,12 +1591,36 @@ function deviceSubtitle(d: AdbDevice) {
   overflow-y: auto;
 }
 .shot-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 6px;
   border: 1px solid #f0f0f0;
   border-radius: 6px;
+}
+/* 没看过的加个边框和角标，一眼能看出哪几张是新的 */
+.shot-card-new {
+  border-color: #ff4d4f66;
+  box-shadow: 0 0 0 1px #ff4d4f22;
+}
+.shot-new-dot {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  z-index: 2;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background-color: #ff4d4f;
+  color: #fff;
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
+}
+.shots-unseen {
+  color: #ff4d4f;
 }
 .shot-thumb {
   width: 100%;

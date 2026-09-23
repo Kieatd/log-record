@@ -133,6 +133,10 @@ const createWindow = () => {
 
 
 
+
+
+
+
   ipcMain.on('openUrl', (_, url) => {
     shell.openExternal(url);
   });
@@ -286,7 +290,12 @@ const createWindow = () => {
       .sort((a, b) => b.mtime - a.mtime); // 新的在前
   };
 
-  ipcMain.handle('shots:count', () => ({ count: listShots().length }));
+  // 顺便把文件名带回去：渲染层要拿它和「已查看」列表比对，算出未读数。
+  // 这里不生成缩略图，所以很便宜，可以随便调。
+  ipcMain.handle('shots:count', () => {
+    const shots = listShots();
+    return { count: shots.length, names: shots.map((s) => s.name) };
+  });
 
   // 给列表用的小缩略图（原图 1080x2220 有 1MB 多，直接传会很卡）
   ipcMain.handle('shots:list', () => {
