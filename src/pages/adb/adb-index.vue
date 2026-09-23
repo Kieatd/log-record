@@ -159,8 +159,18 @@ watch(autoStayOn, (v) => {
 /** 本次运行里已经自动开过的设备，避免用户手动关掉后又给开回来 */
 const autoStayOnDone = new Set<string>();
 
-const mirrorOpen = ref(false);
+/**
+ * 投屏面板默认就打开（用户希望打开设备页右边直接是投屏）。
+ * 关掉之后会记住，下次不再自动弹出来 —— 默认值是「开」，所以只在
+ * 用户明确关过（存了 '0'）的时候才是关的。
+ */
+const MIRROR_OPEN_KEY = 'Log Record$$adbMirrorOpen';
+const mirrorOpen = ref(localStorage.getItem(MIRROR_OPEN_KEY) !== '0');
+watch(mirrorOpen, (v) => {
+  localStorage.setItem(MIRROR_OPEN_KEY, v ? '1' : '0');
+});
 const mirrorRunning = ref(false);
+const mirrorRef = ref<{ start: () => void; stop: () => Promise<void> } | null>(null);
 
 const stayAwake = ref<StayAwakeState | null>(null);
 const busyStayOn = ref(false);
@@ -411,6 +421,25 @@ function openMirror() {
   }
   mirrorOpen.value = true;
 }
+
+function toggleMirror() {
+  if (mirrorOpen.value) {
+    closeMirror();
+    return;
+  }
+  openMirror();
+}
+
+/**
+ * 设备就绪 + 面板开着 + 还没在投 → 自动开始。
+ * 这条也覆盖「打开应用时手机还没插上，后来才插上」的情况：
+ * 设备列表刷新后 ready 变 true，就会自动连上。
+ */
+watch([ready, mirrorOpen], async ([isReady, isOpen]) => {
+  if (!isReady || !isOpen) return;
+  await nextTick();
+  if (!mirrorRunning.value) mirrorRef.value?.start();
+});
 
 async function closeMirror() {
   await api.scrcpyStop();
@@ -1087,14 +1116,24 @@ function deviceSubtitle(d: AdbDevice) {
       <!-- 投屏 -->
       <div
         class="tile"
-        :class="{ 'tile-disabled': !ready }"
-        @click="openMirror"
+        :class="{ 'tile-disabled': !ready, 'tile-on': mirrorOpen }"
+        @click="toggleMirror"
       >
-        <div class="tile-icon">
-          <DesktopOutlined />
+        <div class="tile-head">
+          <div class="tile-icon">
+            <DesktopOutlined />
+          </div>
+          <a-switch
+            size="small"
+            :checked="mirrorOpen"
+            :disabled="!ready"
+            @click.stop="toggleMirror"
+          />
         </div>
         <div class="tile-title">{{ $t('投屏操控') }}</div>
-        <div class="tile-desc">{{ $t('在电脑上看手机画面并直接操作') }}</div>
+        <div class="tile-desc">
+          {{ mirrorOpen ? (mirrorRunning ? $t('已连接，右边就是手机画面') : $t('正在连接…')) : $t('在电脑上看手机画面并直接操作') }}
+        </div>
       </div>
 
       <!-- 无线连接 -->
@@ -1323,6 +1362,7 @@ function deviceSubtitle(d: AdbDevice) {
     <!-- 右边：投屏面板（只有开着才占位置） -->
     <div v-if="mirrorOpen" class="adb-side">
       <ScrcpyView
+        ref="mirrorRef"
         :serial="currentSerial"
         @log="(t: string) => pushLog(t)"
         @running="(v: boolean) => (mirrorRunning = v)"
@@ -1534,6 +1574,11 @@ function deviceSubtitle(d: AdbDevice) {
 .tile-wide {
   grid-column: span 2;
   cursor: default;
+}
+/* 开着的时候给个淡色底，和关掉区分开 */
+.tile-on {
+  border-color: #33666680;
+  background-color: #3366660d;
 }
 .tile-drop {
   border-color: #336666;

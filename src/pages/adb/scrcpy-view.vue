@@ -284,7 +284,7 @@ onUnmounted(() => {
   stop();
 });
 
-defineExpose({ stop });
+defineExpose({ stop, start });
 </script>
 
 <template>
