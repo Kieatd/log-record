@@ -5,6 +5,7 @@ import {
   onActivated,
   onMounted,
   onUnmounted,
+  reactive,
   ref,
   watch,
 } from 'vue';
@@ -14,11 +15,13 @@ import ScrcpyView from './scrcpy-view.vue';
 import {
   ApiOutlined,
   AppstoreAddOutlined,
+  BugOutlined,
   BulbOutlined,
   CameraOutlined,
   CheckCircleFilled,
   DeleteOutlined,
   DesktopOutlined,
+  FolderOpenOutlined,
   CloseCircleFilled,
   ExclamationCircleFilled,
   LinkOutlined,
@@ -29,7 +32,9 @@ import {
   ReloadOutlined,
   SaveOutlined,
   SearchOutlined,
+  SettingOutlined,
   ThunderboltOutlined,
+  UploadOutlined,
   UsbOutlined,
   WifiOutlined,
 } from '@ant-design/icons-vue';
@@ -642,6 +647,215 @@ async function wakeUp() {
   message.info(res.message);
 }
 
+/** monkey 的应用下拉：有应用名就显示「应用名 (包名)」 */
+const pkgOptions = computed(() =>
+  pkgList.value.map((p) => ({
+    value: p,
+    label: appLabels.value[p] ? `${appLabels.value[p]} (${p})` : p,
+  })),
+);
+
+/* ---------------- monkey 压测 ---------------- */
+
+const monkeyOpen = ref(false);
+const monkeyRunning = ref(false);
+const monkeyStarting = ref(false);
+/** monkey 实际记录下来的动作数（不是事件数，详见 utils/monkey.ts 的注释） */
+const monkeyActions = ref(0);
+const monkeyElapsed = ref(0);
+let monkeyTimer: ReturnType<typeof setInterval> | null = null;
+
+const MONKEY_KEY = 'Log Record$$monkeyConfig';
+const monkeyForm = reactive({
+  packageName: '',
+  count: 500,
+  throttle: 300,
+  seed: 0,
+  ignoreCrashes: true,
+  ignoreTimeouts: true,
+  ...(() => {
+    try {
+      return JSON.parse(localStorage.getItem(MONKEY_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  })(),
+});
+watch(
+  () => ({ ...monkeyForm }),
+  (v) => localStorage.setItem(MONKEY_KEY, JSON.stringify(v)),
+  { deep: true },
+);
+
+function monkeyElapsedText() {
+  const s = monkeyElapsed.value;
+  return s < 60 ? `${s} ${i18n.t('秒')}` : `${Math.floor(s / 60)} ${i18n.t('分')} ${String(s % 60).padStart(2, '0')} ${i18n.t('秒')}`;
+}
+
+async function openMonkeySettings() {
+  monkeyOpen.value = true;
+  // 选应用要用到已装应用列表，顺便把它读出来（带应用名）
+  if (!pkgList.value.length) await loadPackages();
+}
+
+async function startMonkeyRun() {
+  if (!ready.value) {
+    message.warning(i18n.t('先插上线，选中一台设备'));
+    return;
+  }
+  if (!monkeyForm.packageName) {
+    message.warning(i18n.t('先选一个要测的应用'));
+    monkeyOpen.value = true;
+    return;
+  }
+  // 种子：留着能复现问题，所以随机生成后写回表单显示出来
+  if (!monkeyForm.seed) {
+    monkeyForm.seed = Math.floor(Math.random() * 1000000);
+  }
+  monkeyStarting.value = true;
+  monkeyActions.value = 0;
+  monkeyElapsed.value = 0;
+  try {
+    const res = await api.monkeyStart({
+      serial: currentSerial.value,
+      ...monkeyForm,
+    });
+    if (!res.ok) {
+      message.error(res.message);
+      return;
+    }
+    monkeyRunning.value = true;
+    pushLog(
+      `$ adb -s ${currentSerial.value} shell monkey -p ${monkeyForm.packageName}` +
+        ` --throttle ${monkeyForm.throttle} -s ${monkeyForm.seed} -v ${monkeyForm.count}`,
+      'info',
+    );
+    if (monkeyTimer) clearInterval(monkeyTimer);
+    monkeyTimer = setInterval(() => (monkeyElapsed.value += 1), 1000);
+  } finally {
+    monkeyStarting.value = false;
+  }
+}
+
+async function stopMonkeyRun() {
+  await api.monkeyStop();
+}
+
+function toggleMonkey() {
+  if (monkeyRunning.value) {
+    stopMonkeyRun();
+    return;
+  }
+  startMonkeyRun();
+}
+
+/* ---------------- 传文件到手机 ---------------- */
+
+const pushing = ref(false);
+const pushDragging = ref(false);
+const pushState = ref<{
+  percent: number;
+  bytes: number;
+  total: number;
+  index: number;
+  count: number;
+  name: string;
+} | null>(null);
+const pushElapsed = ref(0);
+const pushTaskId = ref('');
+let pushTimer: ReturnType<typeof setInterval> | null = null;
+
+const PUSH_DEST_KEY = 'Log Record$$pushDest';
+const pushDest = ref(localStorage.getItem(PUSH_DEST_KEY) || '/sdcard/Download/');
+const pushDestOpen = ref(false);
+
+function savePushDest() {
+  const v = pushDest.value.trim() || '/sdcard/Download/';
+  pushDest.value = v.endsWith('/') ? v : `${v}/`;
+  localStorage.setItem(PUSH_DEST_KEY, pushDest.value);
+  pushDestOpen.value = false;
+}
+
+const pushMb = computed(() => {
+  const st = pushState.value;
+  if (!st || !st.total) return '';
+  return `${(st.bytes / 1024 / 1024).toFixed(1)} / ${(st.total / 1024 / 1024).toFixed(1)} MB`;
+});
+
+async function doPush(paths: string[]) {
+  if (!ready.value) {
+    message.warning(i18n.t('先插上线，选中一台设备'));
+    return;
+  }
+  if (!paths.length) return;
+  pushTaskId.value = `push-${Date.now()}`;
+  pushing.value = true;
+  pushState.value = null;
+  pushElapsed.value = 0;
+  if (pushTimer) clearInterval(pushTimer);
+  pushTimer = setInterval(() => (pushElapsed.value += 1), 1000);
+  pushLog(`${i18n.t('正在传到')} ${pushDest.value}（${paths.length} 项）…`, 'info');
+  try {
+    const res = await api.pushFiles(
+      paths,
+      pushDest.value,
+      currentSerial.value,
+      pushTaskId.value,
+    );
+    pushLog(res.message, res.ok ? 'ok' : 'err');
+    if (res.ok) message.success(res.message);
+    else if (!res.canceled) message.error(res.message);
+  } finally {
+    pushing.value = false;
+    pushState.value = null;
+    if (pushTimer) {
+      clearInterval(pushTimer);
+      pushTimer = null;
+    }
+  }
+}
+
+async function pickAndPush() {
+  const res = await api.pushPick();
+  if (!res.canceled) await doPush(res.paths);
+}
+
+async function cancelPush() {
+  if (!pushTaskId.value) return;
+  await api.pushCancel(pushTaskId.value);
+  pushLog(i18n.t('已请求取消传输'), 'err');
+}
+
+function onPushDragOver(e: DragEvent) {
+  e.preventDefault();
+  pushDragging.value = true;
+}
+
+function onPushDragLeave() {
+  pushDragging.value = false;
+}
+
+async function onPushDrop(e: DragEvent) {
+  e.preventDefault();
+  pushDragging.value = false;
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (!files.length) return;
+  const paths: string[] = [];
+  for (const f of files) {
+    try {
+      const p = api.getPathForFile(f);
+      if (p) paths.push(p);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!paths.length) {
+    message.warning(i18n.t('没拿到文件路径，请用「点击选择」'));
+    return;
+  }
+  await doPush(paths);
+}
+
 /* ---------------- 截图记录 ---------------- */
 
 async function loadShotCount() {
@@ -821,6 +1035,35 @@ onMounted(async () => {
   }
   if (api.onAdbProgress) {
     api.onAdbProgress((payload: InstallProgressState) => onInstallProgress(payload));
+  }
+  if (api.onMonkeyOutput) {
+    api.onMonkeyOutput((line: string) => {
+      // 崩溃/无响应单独标红，一眼能看见
+      const bad = /CRASH|NOT RESPONDING|aborted/i.test(line);
+      pushLog(line, bad ? 'err' : 'info');
+    });
+  }
+  if (api.onMonkeyEvent) {
+    api.onMonkeyEvent((n: number) => (monkeyActions.value = n));
+  }
+  if (api.onMonkeyClosed) {
+    api.onMonkeyClosed(() => {
+      monkeyRunning.value = false;
+      if (monkeyTimer) {
+        clearInterval(monkeyTimer);
+        monkeyTimer = null;
+      }
+      monkeyStarting.value = false;
+    });
+  }
+  if (api.onPushOutput) {
+    api.onPushOutput((line: string) => pushLog(line, 'info'));
+  }
+  if (api.onPushProgress) {
+    api.onPushProgress((p: any) => {
+      if (p.taskId !== pushTaskId.value) return;
+      pushState.value = p;
+    });
   }
   // 截图记录和缩略图跟设备无关，先读 —— 原来排在设备那一串后面，
   // 而读设备 + 读常亮 + 自动开启常亮要好几秒，结果刚打开时缩略图是空的
@@ -1172,6 +1415,78 @@ function deviceSubtitle(d: AdbDevice) {
           </a-button>
         </div>
       </div>
+
+      <!-- Monkey 压测：左边开始，右边设置参数 -->
+      <div class="tile tile-wide tile-split" :class="{ 'tile-disabled': !ready }">
+        <div
+          class="tile-half tile-half-act"
+          :class="{ 'tile-half-disabled': monkeyStarting }"
+          @click="ready && !monkeyStarting && toggleMonkey()"
+        >
+          <div class="tile-icon">
+            <LoadingOutlined v-if="monkeyStarting" spin />
+            <BugOutlined v-else />
+          </div>
+          <div class="tile-title">{{ $t('Monkey 压测') }}</div>
+          <div class="tile-desc">
+            <template v-if="monkeyRunning">
+              {{ $t('运行中') }} · {{ $t('约') }} {{ monkeyActions }} {{ $t('个动作') }} ·
+              {{ monkeyElapsedText() }}
+            </template>
+            <template v-else>{{ $t('点这里开始随机点按测试') }}</template>
+          </div>
+        </div>
+        <div class="tile-half tile-half-shots" @click="openMonkeySettings">
+          <SettingOutlined class="tile-open" />
+          <div class="tile-desc">{{ $t('设置参数') }}</div>
+        </div>
+      </div>
+
+      <!-- 传文件到手机 -->
+      <div
+        class="tile tile-wide"
+        :class="{ 'tile-drop': pushDragging, 'tile-disabled': !ready || pushing }"
+        @dragover="onPushDragOver"
+        @dragleave="onPushDragLeave"
+        @drop="onPushDrop"
+        @click="ready && !pushing && pickAndPush()"
+      >
+        <div class="tile-head">
+          <div class="tile-icon">
+            <LoadingOutlined v-if="pushing" spin />
+            <UploadOutlined v-else />
+          </div>
+          <span class="tile-guard" @click.stop @mousedown.stop>
+            <a-tooltip :title="$t('改接收目录')">
+              <FolderOpenOutlined class="tile-open" @click="pushDestOpen = true" />
+            </a-tooltip>
+          </span>
+        </div>
+        <div class="tile-title">{{ $t('传文件到手机') }}</div>
+        <template v-if="pushing">
+          <a-progress
+            :percent="pushState?.percent ?? 0"
+            :show-info="false"
+            size="small"
+            class="tile-progress"
+          />
+          <div class="tile-desc">
+            {{ pushState ? `${pushState.index}/${pushState.count} ${pushState.name}` : $t('准备中…') }}
+          </div>
+          <div class="tile-desc tile-dim">
+            {{ pushMb }} · {{ $t('已用') }} {{ pushElapsed }} {{ $t('秒') }}
+          </div>
+          <a-button size="small" danger class="tile-cancel" @click.stop="cancelPush">
+            {{ $t('取消') }}
+          </a-button>
+        </template>
+        <template v-else>
+          <div class="tile-desc">
+            {{ pushDragging ? $t('松手就开始传') : $t('把文件拖到这里，或点击选择') }}
+          </div>
+          <div class="tile-desc tile-dim">→ {{ pushDest }}</div>
+        </template>
+      </div>
     </div>
 
     <!-- ⑤ 输出 -->
@@ -1244,6 +1559,79 @@ function deviceSubtitle(d: AdbDevice) {
         <span class="un-count">
           {{ filteredPkgs.length }} / {{ pkgList.length }}
         </span>
+      </div>
+    </a-modal>
+
+    <!-- monkey 设置 -->
+    <a-modal
+      v-model:open="monkeyOpen"
+      :title="$t('Monkey 设置')"
+      :footer="null"
+      width="460px"
+    >
+      <div class="mk-form">
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('测试哪个应用') }}</span>
+          <a-select
+            v-model:value="monkeyForm.packageName"
+            show-search
+            size="small"
+            style="flex: 1"
+            :placeholder="pkgLoading ? $t('读取应用列表…') : $t('选一个应用（只列第三方）')"
+            :options="pkgOptions"
+            :loading="pkgLoading"
+          />
+        </div>
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('事件数量') }}</span>
+          <a-input-number v-model:value="monkeyForm.count" :min="1" :max="1000000" size="small" style="flex: 1" />
+        </div>
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('间隔（毫秒）') }}</span>
+          <a-input-number v-model:value="monkeyForm.throttle" :min="0" :max="10000" size="small" style="flex: 1" />
+        </div>
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('随机种子') }}</span>
+          <a-input-number v-model:value="monkeyForm.seed" :min="0" size="small" style="flex: 1" />
+          <span class="mk-hint">{{ $t('留着能复现问题') }}</span>
+        </div>
+        <div class="mk-row">
+          <a-checkbox v-model:checked="monkeyForm.ignoreCrashes">{{ $t('忽略崩溃继续跑') }}</a-checkbox>
+          <a-checkbox v-model:checked="monkeyForm.ignoreTimeouts">{{ $t('忽略无响应继续跑') }}</a-checkbox>
+        </div>
+        <div class="mk-tip">
+          {{ $t('monkey 会往应用里随机点按滑动，用来跑稳定性；输出里出现 CRASH 会被标红') }}
+        </div>
+      </div>
+      <div class="mk-foot">
+        <a-button size="small" @click="monkeyOpen = false">{{ $t('取消') }}</a-button>
+        <a-button
+          size="small"
+          type="primary"
+          @click="
+            monkeyOpen = false;
+            startMonkeyRun();
+          "
+        >
+          {{ $t('开始') }}
+        </a-button>
+      </div>
+    </a-modal>
+
+    <!-- 传文件的接收目录 -->
+    <a-modal
+      v-model:open="pushDestOpen"
+      :title="$t('手机上的接收目录')"
+      :footer="null"
+      width="420px"
+    >
+      <a-input v-model:value="pushDest" size="small" placeholder="/sdcard/Download/" />
+      <div class="mk-tip">
+        {{ $t('默认放到 Download 目录，手机上打开「文件管理」就能看到') }}
+      </div>
+      <div class="mk-foot">
+        <a-button size="small" @click="pushDestOpen = false">{{ $t('取消') }}</a-button>
+        <a-button size="small" type="primary" @click="savePushDest">{{ $t('保存') }}</a-button>
       </div>
     </a-modal>
 
@@ -1804,6 +2192,40 @@ function deviceSubtitle(d: AdbDevice) {
   max-width: 100%;
   border-radius: 4px;
   box-shadow: 0 2px 8px #0000001f;
+}
+
+/* ---- monkey 设置弹层 ---- */
+.mk-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mk-label {
+  width: 84px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #666;
+}
+.mk-hint {
+  font-size: 11px;
+  color: #bbb;
+}
+.mk-tip {
+  font-size: 11px;
+  color: #999;
+  line-height: 1.6;
+  margin-top: 2px;
+}
+.mk-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 /* ---- 卸载弹层 ---- */

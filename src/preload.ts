@@ -60,6 +60,34 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbPickApk: () => ipcRenderer.invoke('adb:pickApk'),
   adbPackages: (serial?: string, includeSystem?: boolean) =>
     ipcRenderer.invoke('adb:packages', { serial, includeSystem }),
+  /* ---------------- monkey 压测 ---------------- */
+  monkeyStart: (options: {
+    serial?: string;
+    packageName?: string;
+    count?: number;
+    throttle?: number;
+    seed?: number;
+    ignoreCrashes?: boolean;
+    ignoreTimeouts?: boolean;
+  }) => ipcRenderer.invoke('monkey:start', options),
+  monkeyStop: () => ipcRenderer.invoke('monkey:stop'),
+  onMonkeyOutput: (callback: any) =>
+    ipcRenderer.on('monkey:output', (_e, v) => callback(v)),
+  onMonkeyEvent: (callback: any) =>
+    ipcRenderer.on('monkey:event', (_e, v) => callback(v)),
+  onMonkeyClosed: (callback: any) =>
+    ipcRenderer.on('monkey:closed', (_e, v) => callback(v)),
+
+  /* ---------------- 快速传文件 ---------------- */
+  pushPick: () => ipcRenderer.invoke('push:pick'),
+  pushFiles: (paths: string[], dest?: string, serial?: string, taskId?: string) =>
+    ipcRenderer.invoke('push:files', { paths, dest, serial, taskId }),
+  pushCancel: (taskId: string) => ipcRenderer.invoke('push:cancel', taskId),
+  onPushOutput: (callback: any) =>
+    ipcRenderer.on('push:output', (_e, v) => callback(v)),
+  onPushProgress: (callback: any) =>
+    ipcRenderer.on('push:progress', (_e, v) => callback(v)),
+
   /* ---------------- scrcpy 投屏 / 操控 ---------------- */
   scrcpyStatus: () => ipcRenderer.invoke('scrcpy:status'),
   scrcpyStart: (serial?: string, maxSize?: number, maxFps?: number) =>

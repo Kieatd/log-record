@@ -10,6 +10,8 @@ import {
   screen,
 } from 'electron';
 import fs from 'fs';
+import { startMonkey, stopMonkey } from './utils/monkey';
+import { cancelPush, pushFiles } from './utils/push';
 import {
   injectKey,
   injectScroll,
@@ -118,6 +120,11 @@ const createWindow = () => {
   ipcMain.handle('checkIsUpdate', () =>
     checkForUpgrade(author.name, name, version),
   );
+
+
+
+
+
 
 
 
@@ -502,6 +509,72 @@ const createWindow = () => {
   ipcMain.handle('scrcpy:key', (_, payload: any) => injectKey(payload));
   ipcMain.handle('scrcpy:text', (_, text: string) => injectText(text));
   ipcMain.handle('scrcpy:power', (_, on: boolean) => setScreenPower(on));
+
+  /* ---------------- monkey 压测 ---------------- */
+
+  ipcMain.handle(
+    'monkey:start',
+    (
+      _,
+      payload: {
+        serial?: string;
+        packageName?: string;
+        count?: number;
+        throttle?: number;
+        seed?: number;
+        ignoreCrashes?: boolean;
+        ignoreTimeouts?: boolean;
+      },
+    ) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return startMonkey(info.file, {
+        ...payload,
+        onOutput: (line) => mainWindow.webContents.send('monkey:output', line),
+        onEvent: (n) => mainWindow.webContents.send('monkey:event', n),
+        onClose: (code) => mainWindow.webContents.send('monkey:closed', code),
+      });
+    },
+  );
+
+  ipcMain.handle('monkey:stop', () => ({ ok: stopMonkey() }));
+
+  /* ---------------- 快速传文件 ---------------- */
+
+  ipcMain.handle('push:pick', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要传到手机的文件',
+      properties: ['openFile', 'multiSelections'],
+    });
+    if (result.canceled || !result.filePaths.length) return { canceled: true };
+    return { canceled: false, paths: result.filePaths };
+  });
+
+  ipcMain.handle(
+    'push:files',
+    async (
+      _,
+      payload: { paths: string[]; dest?: string; serial?: string; taskId?: string },
+    ) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return pushFiles(info.file, payload.paths || [], {
+        serial: payload.serial,
+        taskId: payload.taskId,
+        dest: payload.dest || '/sdcard/Download/',
+        onOutput: (line) => mainWindow.webContents.send('push:output', line),
+        onProgress: (p) => {
+          if (payload.taskId) {
+            mainWindow.webContents.send('push:progress', { taskId: payload.taskId, ...p });
+          }
+        },
+      });
+    },
+  );
+
+  ipcMain.handle('push:cancel', (_, taskId: string) => ({
+    ok: cancelPush(taskId),
+  }));
 
   ipcMain.handle('adb:cancelInstall', (_, taskId: string) =>
     cancelInstall(taskId),
