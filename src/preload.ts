@@ -103,6 +103,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAdbProgress: (callback: any) =>
     ipcRenderer.on('adb:progress', (_event, value) => callback(value)),
   adbScreencap: (serial?: string) => ipcRenderer.invoke('adb:screencap', serial),
+  shotsCount: () => ipcRenderer.invoke('shots:count'),
+  shotsList: () => ipcRenderer.invoke('shots:list'),
+  shotsRead: (name: string) => ipcRenderer.invoke('shots:read', name),
+  shotsSaveAs: (name: string) => ipcRenderer.invoke('shots:saveAs', name),
+  shotsDelete: (name: string) => ipcRenderer.invoke('shots:delete', name),
+  shotsOpenFolder: () => ipcRenderer.invoke('shots:openFolder'),
   adbWakeup: (serial?: string) => ipcRenderer.invoke('adb:wakeup', serial),
   adbStayAwake: (serial?: string) => ipcRenderer.invoke('adb:stayAwake', serial),
   adbSetStayAwake: (on: boolean, serial?: string) =>

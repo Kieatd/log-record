@@ -24,6 +24,7 @@ import {
   LinkOutlined,
   LoadingOutlined,
   MobileOutlined,
+  PictureOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   SaveOutlined,
@@ -74,8 +75,16 @@ const dragging = ref(false);
 const logs = ref<{ text: string; type: 'info' | 'ok' | 'err' }[]>([]);
 const logBox = ref<HTMLElement | null>(null);
 
-const shot = ref<{ dataUrl: string; awake: boolean | null } | null>(null);
 const shooting = ref(false);
+
+/** 截图记录：图片存在 userData/screenshots/，这里只拿缩略图 */
+const shotsOpen = ref(false);
+const shots = ref<{ name: string; size: number; mtime: number; thumb: string }[]>([]);
+const shotsLoading = ref(false);
+const shotCount = ref(0);
+const viewerOpen = ref(false);
+const viewerUrl = ref('');
+const viewerName = ref('');
 
 const wifiIp = ref('');
 const busyWifi = ref(false);
@@ -553,7 +562,6 @@ async function doUninstall(pkg: string) {
 
 async function takeScreenshot() {
   shooting.value = true;
-  shot.value = null;
   pushLog(i18n.t('正在截图…'), 'info');
   try {
     const res = await api.adbScreencap(currentSerial.value);
@@ -562,12 +570,16 @@ async function takeScreenshot() {
       message.error(res.message);
       return;
     }
-    shot.value = { dataUrl: res.dataUrl, awake: res.screenAwake };
+    shotCount.value = res.count ?? shotCount.value + 1;
     if (res.screenAwake === false) {
+      // 还是那个坑：息屏截出来是全黑的，得说清楚
       pushLog(i18n.t('截图成功，但手机是息屏状态，截出来会是全黑的'), 'err');
+      message.warning(i18n.t('截图成功，但手机息屏了，画面是全黑的'));
     } else {
-      pushLog(i18n.t('截图成功'), 'ok');
+      pushLog(`${i18n.t('截图成功')} → ${res.name || ''}`, 'ok');
+      message.success(i18n.t('截图成功'));
     }
+    if (shotsOpen.value) await loadShots();
   } finally {
     shooting.value = false;
   }
@@ -579,20 +591,81 @@ async function wakeUp() {
   message.info(res.message);
 }
 
-async function saveScreenshot() {
-  if (!shot.value) return;
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[:T]/g, '-')
-    .slice(0, 19);
-  const res = await api.adbSaveImage(
-    shot.value.dataUrl,
-    `screenshot-${currentDevice.value?.model || 'device'}-${stamp}.png`,
-  );
-  if (!res.canceled) {
-    pushLog(`${i18n.t('已保存到')} ${res.filePath}`, 'ok');
-    message.success(i18n.t('已保存'));
+/* ---------------- 截图记录 ---------------- */
+
+async function loadShotCount() {
+  try {
+    const res = await api.shotsCount();
+    shotCount.value = res?.count ?? 0;
+  } catch {
+    /* ignore */
   }
+}
+
+async function loadShots() {
+  shotsLoading.value = true;
+  try {
+    const res = await api.shotsList();
+    shots.value = res?.shots || [];
+  } finally {
+    shotsLoading.value = false;
+  }
+}
+
+function openShots() {
+  shotsOpen.value = true;
+  loadShotCount();
+  loadShots();
+}
+
+async function viewShot(name: string) {
+  const res = await api.shotsRead(name);
+  if (!res.ok) {
+    message.error(res.message);
+    await loadShots();
+    return;
+  }
+  viewerUrl.value = res.dataUrl;
+  viewerName.value = name;
+  viewerOpen.value = true;
+}
+
+async function saveShotAs(name: string) {
+  const res = await api.shotsSaveAs(name);
+  if (res.canceled) return;
+  if (res.ok) {
+    message.success(i18n.t('已保存'));
+    pushLog(`${i18n.t('已保存到')} ${res.filePath}`, 'ok');
+  } else {
+    message.error(res.message || i18n.t('保存失败'));
+  }
+}
+
+async function deleteShot(name: string) {
+  const res = await api.shotsDelete(name);
+  if (res.ok) {
+    message.success(i18n.t('已删除'));
+    await loadShots();
+    await loadShotCount();
+  } else {
+    message.error(res.message || '删除失败');
+  }
+}
+
+function openShotsFolder() {
+  api.shotsOpenFolder();
+}
+
+function shotTime(ms: number) {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function shotSize(bytes: number) {
+  return bytes > 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    : `${Math.round(bytes / 1024)} KB`;
 }
 
 /* ---------------- 无线连接 ---------------- */
@@ -679,6 +752,7 @@ onMounted(async () => {
   await loadAdb();
   await loadDevices();
   await loadStayAwake();
+  await loadShotCount();
 });
 
 onActivated(() => {
@@ -871,12 +945,27 @@ function deviceSubtitle(d: AdbDevice) {
         :class="{ 'tile-disabled': !ready || shooting }"
         @click="ready && !shooting && takeScreenshot()"
       >
-        <div class="tile-icon">
-          <LoadingOutlined v-if="shooting" spin />
-          <CameraOutlined v-else />
+        <div class="tile-head">
+          <div class="tile-icon">
+            <LoadingOutlined v-if="shooting" spin />
+            <CameraOutlined v-else />
+          </div>
+          <!-- 截图记录入口。包一层 guard：不拦的话点击会冒泡到磁贴去触发截图 -->
+          <span class="tile-guard tile-open-guard" @click.stop @mousedown.stop>
+            <a-tooltip :title="$t('查看截图记录')">
+              <a-badge
+                :count="shotCount"
+                :overflow-count="99"
+                size="small"
+                :offset="[2, -2]"
+              >
+                <PictureOutlined class="tile-open" @click="openShots" />
+              </a-badge>
+            </a-tooltip>
+          </span>
         </div>
         <div class="tile-title">{{ $t('截图') }}</div>
-        <div class="tile-desc">{{ $t('截取手机当前画面') }}</div>
+        <div class="tile-desc">{{ $t('截完自动存进「截图记录」') }}</div>
       </div>
 
       <!-- 屏幕常亮 -->
@@ -983,26 +1072,6 @@ function deviceSubtitle(d: AdbDevice) {
       </div>
     </div>
 
-    <!-- ④ 截图预览 -->
-    <template v-if="shot">
-      <div class="section-head">
-        <span class="section-title">{{ $t('截图结果') }}</span>
-        <a-space :size="6">
-          <a-button size="small" @click="wakeUp">
-            <ThunderboltOutlined />
-            {{ $t('唤醒屏幕') }}
-          </a-button>
-          <a-button size="small" type="primary" @click="saveScreenshot">
-            <SaveOutlined />
-            {{ $t('保存') }}
-          </a-button>
-        </a-space>
-      </div>
-      <div class="shot-box">
-        <img :src="shot.dataUrl" class="shot-img" alt="screenshot" />
-      </div>
-    </template>
-
     <!-- ⑤ 输出 -->
     <div class="section-head">
       <span class="section-title">{{ $t('输出') }}</span>
@@ -1073,6 +1142,77 @@ function deviceSubtitle(d: AdbDevice) {
         <span class="un-count">
           {{ filteredPkgs.length }} / {{ pkgList.length }}
         </span>
+      </div>
+    </a-modal>
+
+    <!-- 截图记录 -->
+    <a-modal
+      v-model:open="shotsOpen"
+      :title="$t('截图记录')"
+      :footer="null"
+      width="680px"
+    >
+      <div class="shots-bar">
+        <span class="shots-count">{{ shotCount }} {{ $t('张') }}</span>
+        <a-space :size="6">
+          <a-button size="small" @click="wakeUp">
+            <ThunderboltOutlined />
+            {{ $t('唤醒屏幕') }}
+          </a-button>
+          <a-button size="small" @click="openShotsFolder">
+            {{ $t('打开文件夹') }}
+          </a-button>
+        </a-space>
+      </div>
+
+      <div v-if="shotsLoading" class="shots-empty">
+        <LoadingOutlined spin />
+        {{ $t('读取中…') }}
+      </div>
+      <div v-else-if="!shots.length" class="shots-empty">
+        {{ $t('还没有截图') }}
+      </div>
+      <div v-else class="shots-grid">
+        <div v-for="s in shots" :key="s.name" class="shot-card">
+          <img
+            v-if="s.thumb"
+            :src="s.thumb"
+            class="shot-thumb"
+            @click="viewShot(s.name)"
+          />
+          <div v-else class="shot-thumb shot-thumb-bad">{{ $t('读不出来') }}</div>
+          <div class="shot-meta">
+            <span class="shot-name" :title="s.name">{{ s.name }}</span>
+            <span class="shot-sub">{{ shotTime(s.mtime) }} · {{ shotSize(s.size) }}</span>
+          </div>
+          <div class="shot-actions">
+            <a-button size="small" @click="saveShotAs(s.name)">{{ $t('另存为') }}</a-button>
+            <a-popconfirm
+              :title="$t('删掉这张截图？')"
+              :ok-text="$t('删除')"
+              :cancel-text="$t('取消')"
+              @confirm="deleteShot(s.name)"
+            >
+              <a-button size="small" danger>{{ $t('删除') }}</a-button>
+            </a-popconfirm>
+          </div>
+        </div>
+      </div>
+    </a-modal>
+
+    <!-- 看大图 -->
+    <a-modal
+      v-model:open="viewerOpen"
+      :title="viewerName"
+      :footer="null"
+      width="fit-content"
+      centered
+    >
+      <img :src="viewerUrl" class="shot-full" />
+      <div class="shot-full-actions">
+        <a-button size="small" type="primary" @click="saveShotAs(viewerName)">
+          {{ $t('另存为') }}
+        </a-button>
       </div>
     </a-modal>
 
@@ -1359,7 +1499,104 @@ function deviceSubtitle(d: AdbDevice) {
   align-self: flex-start;
 }
 
-/* ---- 截图 ---- */
+/* ---- 截图记录 ---- */
+.tile-open-guard {
+  margin-top: 0;
+}
+.tile-open {
+  font-size: 16px;
+  color: #999;
+  cursor: pointer;
+  padding: 2px;
+}
+.tile-open:hover {
+  color: #336666;
+}
+.shots-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.shots-count {
+  font-size: 12px;
+  color: #999;
+}
+.shots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  max-height: 460px;
+  overflow-y: auto;
+}
+.shot-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+}
+.shot-thumb {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 4px;
+  background-color: #f5f5f5;
+  cursor: zoom-in;
+}
+.shot-thumb-bad {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #bbb;
+  font-size: 11px;
+  cursor: default;
+}
+.shot-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.shot-name {
+  font-size: 11px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shot-sub {
+  font-size: 10px;
+  color: #bbb;
+}
+.shot-actions {
+  display: flex;
+  gap: 4px;
+}
+.shots-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 30px;
+  color: #999;
+  font-size: 12px;
+}
+.shot-full {
+  max-width: 74vw;
+  max-height: 74vh;
+  display: block;
+  margin: 0 auto;
+}
+.shot-full-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+/* ---- 截图（旧的预览块已移除） ---- */
 .shot-box {
   display: flex;
   justify-content: center;

@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   dialog,
+  nativeImage,
   ipcMain,
   shell,
   nativeTheme,
@@ -131,6 +132,7 @@ const createWindow = () => {
 
 
 
+
   ipcMain.on('openUrl', (_, url) => {
     shell.openExternal(url);
   });
@@ -239,6 +241,105 @@ const createWindow = () => {
     return { canceled: false, apkPath: result.filePaths[0] };
   });
 
+  /* ---------------- 截屏历史 ---------------- */
+
+  // 截图直接落到 userData/screenshots/ 下，不再往渲染层塞大图。
+  // 想看图去「截图」磁贴里的管理入口看，列表里只给缩略图。
+  const shotsDir = path.join(app.getPath('userData'), 'screenshots');
+  const ensureShotsDir = () => {
+    if (!fs.existsSync(shotsDir)) fs.mkdirSync(shotsDir, { recursive: true });
+    return shotsDir;
+  };
+  const shotPath = (name: string) => path.join(shotsDir, path.basename(name));
+
+  /** 文件名：机型_年月日_时分秒.png，按名字排序就是按时间排序 */
+  const shotName = (model: string, date = new Date()) => {
+    const p = (n: number) => String(n).padStart(2, '0');
+    const safe = (model || 'device').replace(/[^\w.-]/g, '_');
+    return `${safe}_${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}_${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}.png`;
+  };
+
+  const listShots = () => {
+    ensureShotsDir();
+    let names: string[] = [];
+    try {
+      names = fs
+        .readdirSync(shotsDir)
+        .filter((f) => f.toLowerCase().endsWith('.png'));
+    } catch {
+      return [];
+    }
+    return names
+      .map((name) => {
+        const full = shotPath(name);
+        let size = 0;
+        let mtime = 0;
+        try {
+          const st = fs.statSync(full);
+          size = st.size;
+          mtime = st.mtimeMs;
+        } catch {
+          /* ignore */
+        }
+        return { name, size, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime); // 新的在前
+  };
+
+  ipcMain.handle('shots:count', () => ({ count: listShots().length }));
+
+  // 给列表用的小缩略图（原图 1080x2220 有 1MB 多，直接传会很卡）
+  ipcMain.handle('shots:list', () => {
+    const shots = listShots().map((item) => {
+      let thumb = '';
+      try {
+        const img = nativeImage.createFromPath(shotPath(item.name));
+        if (!img.isEmpty()) {
+          thumb = img.resize({ width: 220, quality: 'good' }).toDataURL();
+        }
+      } catch {
+        /* ignore */
+      }
+      return { ...item, thumb };
+    });
+    return { shots };
+  });
+
+  ipcMain.handle('shots:read', (_, name: string) => {
+    const full = shotPath(name);
+    if (!fs.existsSync(full)) return { ok: false, message: '图片不在了' };
+    const img = nativeImage.createFromPath(full);
+    if (img.isEmpty()) return { ok: false, message: '读不出这张图' };
+    return { ok: true, dataUrl: img.toDataURL() };
+  });
+
+  ipcMain.handle('shots:saveAs', async (_, name: string) => {
+    const full = shotPath(name);
+    if (!fs.existsSync(full)) return { ok: false, message: '图片不在了' };
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '保存截图',
+      defaultPath: name,
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    await fs.promises.copyFile(full, result.filePath);
+    return { ok: true, filePath: result.filePath };
+  });
+
+  ipcMain.handle('shots:delete', (_, name: string) => {
+    try {
+      fs.unlinkSync(shotPath(name));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle('shots:openFolder', () => {
+    shell.openPath(ensureShotsDir());
+    return { ok: true };
+  });
+
   ipcMain.handle('adb:screencap', async (_, serial?: string) => {
     const info = currentAdb();
     if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
@@ -246,11 +347,25 @@ const createWindow = () => {
     const awake = await isScreenAwake(info.file, serial);
     const shot = await screencap(info.file, serial);
     if (!shot.ok) return { ok: false, message: shot.message };
+
+    // 存到本地，返回文件名（不给渲染层传大图）
+    let saved = '';
+    try {
+      ensureShotsDir();
+      const devices = await listDevices(info.file);
+      const model = devices.find((d) => d.serial === serial)?.model || '';
+      saved = shotName(model);
+      fs.writeFileSync(shotPath(saved), shot.buffer);
+    } catch (err) {
+      console.warn('保存截图失败', err);
+    }
+
     return {
       ok: true,
       message: '截图成功',
       screenAwake: awake,
-      dataUrl: `data:image/png;base64,${shot.buffer.toString('base64')}`,
+      name: saved,
+      count: listShots().length,
     };
   });
 
