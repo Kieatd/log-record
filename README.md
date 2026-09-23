@@ -135,6 +135,7 @@ of switching to a terminal.
 | **Screenshot** | Captures and previews the phone screen, can be saved to the computer. Warns you when the screen is off (the capture would be black) and offers a wake button |
 | **Keep screen on** | Prevents the screen from turning off while charging, and wakes it when enabled. Tells you when it has no effect because the phone is not plugged in |
 | **Wireless debugging** | Enable once while plugged in, then unplug and connect by IP |
+| **Mirror & control** | A panel on the right shows the live phone screen, and you can click (tap), drag (swipe), scroll, and send keys to it. When the screen is off it says so and offers a wake button |
 | **Custom command** | Run adb shell commands with the output in the panel below |
 
 Raw output of every command is collected in the output panel at the bottom (green for

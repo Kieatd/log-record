@@ -278,17 +278,20 @@ export async function injectTouch(payload: {
   const pressed = payload.action !== 'up';
 
   try {
+    // 注意字段名是 pointerX / pointerY，不是 x / y。
+    // 之前写成 x/y 并用 as any 屏蔽了类型检查，结果序列化出来全是 0，
+    // 每次触摸都点在左上角，看起来就是「操控没反应」。
     await writer.injectTouch({
       action,
       pointerId: 1n,
+      pointerX: Math.max(0, Math.round(payload.x)),
+      pointerY: Math.max(0, Math.round(payload.y)),
+      videoWidth: current.videoWidth,
+      videoHeight: current.videoHeight,
       pressure: pressed ? (payload.pressure ?? 1) : 0,
       actionButton: pressed ? 1 : 0,
       buttons: pressed ? 1 : 0,
-      x: Math.max(0, Math.round(payload.x)),
-      y: Math.max(0, Math.round(payload.y)),
-      videoWidth: current.videoWidth,
-      videoHeight: current.videoHeight,
-    } as any);
+    });
     return { ok: true };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
@@ -307,14 +310,14 @@ export async function injectScroll(payload: {
   if (!current || !writer) return { ok: false, message: '投屏没在跑' };
   try {
     await writer.injectScroll({
-      x: Math.round(payload.x),
-      y: Math.round(payload.y),
+      pointerX: Math.round(payload.x),
+      pointerY: Math.round(payload.y),
       videoWidth: current.videoWidth,
       videoHeight: current.videoHeight,
       scrollX: payload.scrollX,
       scrollY: payload.scrollY,
       buttons: 0,
-    } as any);
+    });
     return { ok: true };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
@@ -338,20 +341,20 @@ export async function injectKey(payload: {
         keyCode: payload.keyCode,
         repeat: 0,
         metaState: 0,
-      } as any);
+      });
       await writer.injectKeyCode({
         action: ACTION_UP,
         keyCode: payload.keyCode,
         repeat: 0,
         metaState: 0,
-      } as any);
+      });
     } else {
       await writer.injectKeyCode({
         action: mode === 'down' ? ACTION_DOWN : ACTION_UP,
         keyCode: payload.keyCode,
         repeat: 0,
         metaState: 0,
-      } as any);
+      });
     }
     return { ok: true };
   } catch (err) {

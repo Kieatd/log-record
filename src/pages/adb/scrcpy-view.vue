@@ -44,8 +44,10 @@ function toVideo(e: MouseEvent) {
   const canvas = canvasRef.value;
   if (!canvas) return { x: 0, y: 0 };
   const rect = canvas.getBoundingClientRect();
-  const w = meta.value?.width || canvas.width;
-  const h = meta.value?.height || canvas.height;
+  // 优先用画布的当前尺寸：手机转屏时视频尺寸会变，
+  // meta 是启动时拿的，用它会算错（画面转过去，点击还按旧比例算）
+  const w = canvas.width || meta.value?.width || 1;
+  const h = canvas.height || meta.value?.height || 1;
   return {
     x: Math.max(0, Math.min(w, ((e.clientX - rect.left) / rect.width) * w)),
     y: Math.max(0, Math.min(h, ((e.clientY - rect.top) / rect.height) * h)),
