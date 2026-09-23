@@ -95,6 +95,19 @@ const installState = ref<InstallProgressState | null>(null);
 const installElapsed = ref(0);
 let installTimer: ReturnType<typeof setInterval> | null = null;
 
+/** 包名 → 安装时间（毫秒）。ADB 不直接给，要解析 dumpsys package */
+const installTimes = ref<Record<string, number>>({});
+const timeLoading = ref(false);
+
+/** 连上设备后自动开启屏幕常亮（默认开，可以关掉） */
+const AUTO_STAY_ON_KEY = 'Log Record$$adbAutoStayOn';
+const autoStayOn = ref(localStorage.getItem(AUTO_STAY_ON_KEY) !== '0');
+watch(autoStayOn, (v) => {
+  localStorage.setItem(AUTO_STAY_ON_KEY, v ? '1' : '0');
+});
+/** 本次运行里已经自动开过的设备，避免用户手动关掉后又给开回来 */
+const autoStayOnDone = new Set<string>();
+
 const mirrorOpen = ref(false);
 const mirrorRunning = ref(false);
 
@@ -167,6 +180,24 @@ async function loadStayAwake() {
   }
   const res = await api.adbStayAwake(currentSerial.value);
   stayAwake.value = res.state;
+  await applyAutoStayOn();
+}
+
+/**
+ * 连上设备后自动开启屏幕常亮。
+ * 每个设备每次运行只做一次：用户手动关掉后，不会切个 tab 又被打开。
+ */
+async function applyAutoStayOn() {
+  if (!autoStayOn.value || !ready.value) return;
+  const serial = currentSerial.value;
+  if (!serial || autoStayOnDone.has(serial)) return;
+  autoStayOnDone.add(serial);
+  if (stayAwake.value?.on) return;
+  const res = await api.adbSetStayAwake(true, serial);
+  if (res.state) stayAwake.value = res.state;
+  if (res.ok) {
+    pushLog(`${i18n.t('已自动开启屏幕常亮')}（${res.state?.modes?.join('、') || ''}）`, 'ok');
+  }
 }
 
 async function toggleStayAwake(e?: MouseEvent) {
@@ -367,14 +398,43 @@ const uninstallingPkg = ref('');
 
 const filteredPkgs = computed(() => {
   const q = pkgSearch.value.trim().toLowerCase();
-  if (!q) return pkgList.value;
-  // 应用名和包名都能搜，中文应用名也能搜
-  return pkgList.value.filter(
-    (p) =>
-      p.toLowerCase().includes(q) ||
-      (appLabels.value[p] || '').toLowerCase().includes(q),
+  const list = q
+    ? pkgList.value.filter(
+        (p) =>
+          p.toLowerCase().includes(q) ||
+          // 应用名和包名都能搜，中文应用名也能搜
+          (appLabels.value[p] || '').toLowerCase().includes(q),
+      )
+    : pkgList.value.slice();
+  // 按安装时间降序：最近装的排最前面，没读到的排最后
+  return list.sort(
+    (a, b) => (installTimes.value[b] || 0) - (installTimes.value[a] || 0),
   );
 });
+
+/** 行右侧显示的安装日期 */
+function installDate(pkg: string) {
+  const t = installTimes.value[pkg];
+  if (!t) return '';
+  const d = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+async function loadInstallTimes() {
+  if (!ready.value) {
+    installTimes.value = {};
+    return;
+  }
+  timeLoading.value = true;
+  try {
+    const res = await api.adbInstallTimes(currentSerial.value);
+    installTimes.value = res.times || {};
+    if (!res.ok && res.message) pushLog(res.message, 'err');
+  } finally {
+    timeLoading.value = false;
+  }
+}
 
 function saveLabels() {
   try {
@@ -436,6 +496,7 @@ async function loadPackages() {
     pkgPaths.value = res.paths || {};
     if (!res.ok) pushLog(res.message, 'err');
     loadMissingLabels();
+    loadInstallTimes();
   } finally {
     pkgLoading.value = false;
   }
@@ -842,6 +903,11 @@ function deviceSubtitle(d: AdbDevice) {
         </div>
         <div class="tile-title">{{ $t('屏幕常亮') }}</div>
         <div class="tile-desc">{{ stayAwakeDesc }}</div>
+        <span class="tile-guard" @click.stop @mousedown.stop>
+          <a-checkbox v-model:checked="autoStayOn" class="tile-check">
+            {{ $t('连接后自动开启') }}
+          </a-checkbox>
+        </span>
       </div>
 
       <!-- 投屏 -->
@@ -965,7 +1031,11 @@ function deviceSubtitle(d: AdbDevice) {
             {{ $t('包含系统应用') }}
           </a-checkbox>
         </a-tooltip>
-        <span v-if="labelLoading" class="un-hint">
+        <span v-if="timeLoading" class="un-hint">
+          <LoadingOutlined spin />
+          {{ $t('读取安装时间') }}
+        </span>
+        <span v-else-if="labelLoading" class="un-hint">
           <LoadingOutlined spin />
           {{ $t('读取应用名') }} {{ labelProgress.done }}/{{ labelProgress.total }}
         </span>
@@ -984,6 +1054,7 @@ function deviceSubtitle(d: AdbDevice) {
             <div class="un-name">{{ appLabels[pkg] || pkg }}</div>
             <div v-if="appLabels[pkg]" class="un-pkg">{{ pkg }}</div>
           </div>
+          <span class="un-time">{{ installDate(pkg) }}</span>
           <a-button
             size="small"
             danger
@@ -1329,6 +1400,12 @@ function deviceSubtitle(d: AdbDevice) {
 }
 .un-item:hover {
   background-color: #fafafa;
+}
+.un-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #bbb;
+  font-family: Menlo, Consolas, monospace;
 }
 .un-info {
   flex: 1;

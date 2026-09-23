@@ -513,6 +513,65 @@ export async function uninstallApp(
 }
 
 /* ------------------------------------------------------------------ */
+/* 应用安装时间                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 解析 dumpsys package 里每个包的安装时间。
+ * 输入是设备侧 grep 过的结果（只留 Package[ 和 lastUpdateTime 两行），
+ * 不然完整输出有 900 多 KB。
+ */
+export function parseInstallTimes(output: string): Record<string, number> {
+  const times: Record<string, number> = {};
+  let current = '';
+  let first = 0;
+  for (const raw of output.split(/\r?\n/)) {
+    const line = raw.trim();
+    const pkg = line.match(/^Package \[([^\]]+)\]/);
+    if (pkg) {
+      // 上一个包只拿到了 firstInstallTime 的话，先记下来
+      if (current && first && !times[current]) times[current] = first;
+      current = pkg[1];
+      first = 0;
+      continue;
+    }
+    const t = line.match(/^(firstInstallTime|lastUpdateTime)=(.+)$/);
+    if (!t || !current) continue;
+    const ms = Date.parse(t[2].trim().replace(' ', 'T'));
+    if (Number.isNaN(ms)) continue;
+    if (t[1] === 'firstInstallTime') {
+      first = ms;
+    } else {
+      // lastUpdateTime 更贴近「我最近装的是哪个」，优先用它
+      times[current] = ms;
+    }
+  }
+  if (current && first && !times[current]) times[current] = first;
+  return times;
+}
+
+/** 读所有应用的安装时间（毫秒时间戳） */
+export async function readInstallTimes(
+  file: string,
+  serial?: string,
+): Promise<{ ok: boolean; message?: string; times: Record<string, number> }> {
+  // 不拼管道：adb shell 里带引号和方括号的 grep 会被 adb 自己吃掉一部分，
+  // 实测 grep 会报 "brackets not balanced"。完整输出 900 多 KB / 0.12 秒，
+  // 直接拉回来本地解析最省事也最稳。
+  const args = ['shell', 'dumpsys', 'package', 'packages'];
+  if (serial) args.unshift('-s', serial);
+  const res = await runAdb(file, args, { timeout: 60000 });
+  if (res.code !== 0 || !res.stdout.trim()) {
+    return {
+      ok: false,
+      message: (res.stderr || '读取安装时间失败').trim(),
+      times: {},
+    };
+  }
+  return { ok: true, times: parseInstallTimes(res.stdout) };
+}
+
+/* ------------------------------------------------------------------ */
 /* 读取设备上已装应用的「应用名」                                      */
 /* ------------------------------------------------------------------ */
 

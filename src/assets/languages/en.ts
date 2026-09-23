@@ -203,4 +203,7 @@ export default {
   '点一下=轻触，拖动=滑动，滚轮=滚动，方向键/回车可用': 'Click = tap, drag = swipe, wheel = scroll, arrow keys / Enter work',
   '手机屏幕是黑的（息屏了），投出来就是全黑': 'The phone screen is off, so the mirror is all black',
   '唤醒屏幕': 'Wake screen',
+  '读取安装时间': 'Loading install times',
+  '连接后自动开启': 'Auto-enable on connect',
+  '已自动开启屏幕常亮': 'Screen-on was enabled automatically',
 };

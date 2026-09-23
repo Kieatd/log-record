@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onScrcpyClosed: (callback: any) =>
     ipcRenderer.on('scrcpy:closed', (_e, v) => callback(v)),
 
+  adbInstallTimes: (serial?: string) => ipcRenderer.invoke('adb:installTimes', serial),
   adbAppLabels: (
     items: { packageName: string; apkPath: string }[],
     serial?: string,

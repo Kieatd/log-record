@@ -40,6 +40,7 @@ import {
   listDevices,
   listPackages,
   loadCustomAdbPath,
+  readInstallTimes,
   readInstalledAppLabels,
   resolveAdb,
   runAdb,
@@ -116,6 +117,7 @@ const createWindow = () => {
   ipcMain.handle('checkIsUpdate', () =>
     checkForUpgrade(author.name, name, version),
   );
+
 
 
 
@@ -262,6 +264,12 @@ const createWindow = () => {
       return listPackages(info.file, payload);
     },
   );
+
+  ipcMain.handle('adb:installTimes', async (_, serial?: string) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, message: info.error || '没找到 adb', times: {} };
+    return readInstallTimes(info.file, serial);
+  });
 
   // 批量读已装应用的「应用名」。安卓的应用名藏在 APK 的 resources.arsc 里，
   // 主进程负责抽出相关文件、拼最小 zip 再交给 aapt，渲染层只管收结果。
