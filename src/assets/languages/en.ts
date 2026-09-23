@@ -228,4 +228,6 @@ export default {
   '开始投屏': 'Start mirroring',
   '投屏会在手机上启动一个服务，需要时再开': 'Mirroring starts a service on the phone — start it only when needed',
   '重试': 'Retry',
+  '停止投屏': 'Stop mirroring',
+  '收起面板': 'Collapse panel',
 };

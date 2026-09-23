@@ -2,11 +2,12 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
-  CloseOutlined,
   DesktopOutlined,
+  DoubleRightOutlined,
   LoadingOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  StopOutlined,
 } from '@ant-design/icons-vue';
 import {
   BitmapVideoFrameRenderer,
@@ -136,6 +137,8 @@ async function start() {
 }
 
 async function stop() {
+  errorText.value = '';
+  meta.value = null;
   if (statTimer) {
     clearInterval(statTimer);
     statTimer = null;
@@ -309,8 +312,13 @@ defineExpose({ stop, start });
       <a-tooltip v-else-if="!starting && !errorText" :title="$t('开始投屏')">
         <PlayCircleOutlined class="sv-icon" @click="start" />
       </a-tooltip>
-      <a-tooltip :title="$t('关闭投屏')">
-        <CloseOutlined class="sv-icon" @click="stop().then(() => emit('close'))" />
+      <!-- 收起：只是把面板收起来腾空间，不动投屏 -->
+      <a-tooltip :title="$t('收起面板')">
+        <DoubleRightOutlined class="sv-icon" @click="emit('close')" />
+      </a-tooltip>
+      <!-- 停止：只停投屏，面板留在原位，回到待机状态 -->
+      <a-tooltip v-if="running || starting" :title="$t('停止投屏')">
+        <StopOutlined class="sv-icon sv-icon-stop" @click="stop()" />
       </a-tooltip>
     </div>
 
@@ -408,6 +416,12 @@ defineExpose({ stop, start });
 }
 .sv-icon + .sv-icon {
   margin-left: 0;
+}
+.sv-icon-stop {
+  color: #f48771;
+}
+.sv-icon-stop:hover {
+  color: #ff7875;
 }
 .sv-body {
   position: relative;
