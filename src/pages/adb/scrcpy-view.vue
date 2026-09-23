@@ -3,7 +3,6 @@ import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   DesktopOutlined,
-  DoubleRightOutlined,
   LoadingOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -17,7 +16,6 @@ import {
 
 const props = defineProps<{ serial: string }>();
 const emit = defineEmits<{
-  (e: 'close'): void;
   (e: 'log', text: string): void;
   (e: 'running', value: boolean): void;
   (e: 'starting', value: boolean): void;
@@ -311,10 +309,6 @@ defineExpose({ stop, start });
       </a-tooltip>
       <a-tooltip v-else-if="!starting && !errorText" :title="$t('开始投屏')">
         <PlayCircleOutlined class="sv-icon" @click="start" />
-      </a-tooltip>
-      <!-- 收起：只是把面板收起来腾空间，不动投屏 -->
-      <a-tooltip :title="$t('收起面板')">
-        <DoubleRightOutlined class="sv-icon" @click="emit('close')" />
       </a-tooltip>
       <!-- 停止：只停投屏，面板留在原位，回到待机状态 -->
       <a-tooltip v-if="running || starting" :title="$t('停止投屏')">

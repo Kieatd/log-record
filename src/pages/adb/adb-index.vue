@@ -159,16 +159,7 @@ watch(autoStayOn, (v) => {
 /** 本次运行里已经自动开过的设备，避免用户手动关掉后又给开回来 */
 const autoStayOnDone = new Set<string>();
 
-/**
- * 投屏面板默认就打开（用户希望打开设备页右边直接是投屏）。
- * 关掉之后会记住，下次不再自动弹出来 —— 默认值是「开」，所以只在
- * 用户明确关过（存了 '0'）的时候才是关的。
- */
-const MIRROR_OPEN_KEY = 'Log Record$$adbMirrorOpen';
-const mirrorOpen = ref(localStorage.getItem(MIRROR_OPEN_KEY) !== '0');
-watch(mirrorOpen, (v) => {
-  localStorage.setItem(MIRROR_OPEN_KEY, v ? '1' : '0');
-});
+// 投屏面板常驻在右侧，不提供收起 —— 这就是想要的默认布局
 const mirrorRunning = ref(false);
 const mirrorStarting = ref(false);
 const mirrorRef = ref<{ start: () => void; stop: () => Promise<void> } | null>(null);
@@ -229,8 +220,8 @@ async function loadDevices() {
 
 async function selectDevice(serial: string) {
   if (serial === currentSerial.value) return;
-  // 投屏投的是当前设备，换设备就得先停掉
-  if (mirrorOpen.value) await closeMirror();
+  // 投屏投的是当前设备，换设备要先停掉（面板留着，方便在新设备上重开）
+  if (mirrorRunning.value) await mirrorRef.value?.stop();
   currentSerial.value = serial;
   await loadStayAwake();
 }
@@ -415,17 +406,8 @@ async function onDrop(e: DragEvent) {
 
 /* ---------------- 投屏 ---------------- */
 
-function openMirror() {
-  if (!ready.value) {
-    message.warning(i18n.t('先插上线，选中一台设备'));
-    return;
-  }
-  mirrorOpen.value = true;
-}
-
 /**
- * 磁贴上的开关控制的是「投屏本身」，不是面板显隐：
- * 面板默认就在（布局需求），要不要投由这里或面板里的按钮决定。
+ * 磁贴上的开关控制投屏本身（面板常驻，不用管显隐）。
  */
 async function toggleMirror() {
   if (!ready.value) {
@@ -436,19 +418,11 @@ async function toggleMirror() {
     await mirrorRef.value?.stop();
     return;
   }
-  mirrorOpen.value = true; // 面板被关过就顺手放出来
-  await nextTick();
   mirrorRef.value?.start();
 }
 
 // 这里刻意不做「设备就绪就自动投屏」：面板默认在，但投屏必须用户自己点。
 // 否则一插上手机就悄悄在手机上起一个服务，不合适。
-
-async function closeMirror() {
-  await api.scrcpyStop();
-  mirrorRunning.value = false;
-  mirrorOpen.value = false;
-}
 
 /* ---------------- 卸载应用 ---------------- */
 
@@ -1363,15 +1337,14 @@ function deviceSubtitle(d: AdbDevice) {
     </div>
     </div>
 
-    <!-- 右边：投屏面板（只有开着才占位置） -->
-    <div v-if="mirrorOpen" class="adb-side">
+    <!-- 右边：投屏面板，常驻 -->
+    <div class="adb-side">
       <ScrcpyView
         ref="mirrorRef"
         :serial="currentSerial"
         @log="(t: string) => pushLog(t)"
         @running="(v: boolean) => (mirrorRunning = v)"
         @starting="(v: boolean) => (mirrorStarting = v)"
-        @close="closeMirror"
       />
     </div>
   </div>
