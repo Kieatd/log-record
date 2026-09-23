@@ -221,4 +221,5 @@ export default {
   '截图成功，但手机息屏了，画面是全黑的': 'Screenshot taken, but the screen is off so it is all black',
   '新': 'New',
   '张没看过': 'unseen',
+  '点这里截取手机画面': 'Click to capture the screen',
 };

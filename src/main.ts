@@ -137,6 +137,7 @@ const createWindow = () => {
 
 
 
+
   ipcMain.on('openUrl', (_, url) => {
     shell.openExternal(url);
   });
@@ -312,6 +313,23 @@ const createWindow = () => {
       return { ...item, thumb };
     });
     return { shots };
+  });
+
+  // 只给最近一张的小缩略图：磁贴右边那一半要用。
+  // 单独开一个接口是因为 shots:list 会把每张都生成一遍缩略图，太重。
+  ipcMain.handle('shots:latest', () => {
+    const newest = listShots()[0];
+    if (!newest) return { ok: true, name: '', thumb: '' };
+    let thumb = '';
+    try {
+      const img = nativeImage.createFromPath(shotPath(newest.name));
+      if (!img.isEmpty()) {
+        thumb = img.resize({ width: 160, quality: 'good' }).toDataURL();
+      }
+    } catch {
+      /* ignore */
+    }
+    return { ok: true, name: newest.name, thumb };
   });
 
   ipcMain.handle('shots:read', (_, name: string) => {

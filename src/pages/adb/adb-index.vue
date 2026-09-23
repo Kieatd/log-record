@@ -99,6 +99,10 @@ const seenShots = ref<string[]>(
     }
   })(),
 );
+/** 最近一张截图的缩略图，显示在磁贴右半边 */
+const latestThumb = ref('');
+const latestName = ref('');
+
 const unseenCount = computed(
   () => shotNames.value.filter((n) => !seenShots.value.includes(n)).length,
 );
@@ -611,6 +615,7 @@ async function takeScreenshot() {
     // 必须重新读一遍列表：红点算的是「没看过的张数」，
     // 得先知道新文件的文件名，光加个计数是没用的
     await loadShotCount();
+    await loadLatestShot();
     if (res.screenAwake === false) {
       // 还是那个坑：息屏截出来是全黑的，得说清楚
       pushLog(i18n.t('截图成功，但手机是息屏状态，截出来会是全黑的'), 'err');
@@ -650,6 +655,16 @@ async function loadShotCount() {
   }
 }
 
+async function loadLatestShot() {
+  try {
+    const res = await api.shotsLatest();
+    latestThumb.value = res?.thumb || '';
+    latestName.value = res?.name || '';
+  } catch {
+    /* ignore */
+  }
+}
+
 async function loadShots() {
   shotsLoading.value = true;
   try {
@@ -663,6 +678,7 @@ async function loadShots() {
 function openShots() {
   shotsOpen.value = true;
   loadShotCount();
+  loadLatestShot();
   loadShots();
 }
 
@@ -697,6 +713,7 @@ async function deleteShot(name: string) {
     message.success(i18n.t('已删除'));
     await loadShots();
     await loadShotCount();
+    await loadLatestShot();
   } else {
     message.error(res.message || '删除失败');
   }
@@ -803,6 +820,7 @@ onMounted(async () => {
   await loadDevices();
   await loadStayAwake();
   await loadShotCount();
+  await loadLatestShot();
 });
 
 onActivated(() => {
@@ -989,33 +1007,45 @@ function deviceSubtitle(d: AdbDevice) {
         <div class="tile-desc">{{ $t('查看手机上装的应用并卸载') }}</div>
       </div>
 
-      <!-- 截图 -->
-      <div
-        class="tile"
-        :class="{ 'tile-disabled': !ready || shooting }"
-        @click="ready && !shooting && takeScreenshot()"
-      >
-        <div class="tile-head">
+      <!-- 截图：左边截屏，右边是最近一张缩略图（点开看全部） -->
+      <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
+        <div
+          class="tile-half tile-half-act"
+          :class="{ 'tile-half-disabled': shooting }"
+          @click="ready && !shooting && takeScreenshot()"
+        >
           <div class="tile-icon">
             <LoadingOutlined v-if="shooting" spin />
             <CameraOutlined v-else />
           </div>
-          <!-- 截图记录入口。包一层 guard：不拦的话点击会冒泡到磁贴去触发截图 -->
-          <span class="tile-guard tile-open-guard" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('查看截图记录')">
-              <a-badge
-                :count="unseenCount"
-                :overflow-count="99"
-                size="small"
-                :offset="[2, -2]"
-              >
-                <PictureOutlined class="tile-open" @click="openShots" />
-              </a-badge>
-            </a-tooltip>
-          </span>
+          <div class="tile-title">{{ $t('截图') }}</div>
+          <div class="tile-desc">
+            {{ shooting ? $t('正在截图…') : $t('点这里截取手机画面') }}
+          </div>
         </div>
-        <div class="tile-title">{{ $t('截图') }}</div>
-        <div class="tile-desc">{{ $t('截完自动存进「截图记录」') }}</div>
+
+        <div class="tile-half tile-half-shots" @click="ready && openShots()">
+          <a-tooltip :title="$t('查看截图记录')">
+            <a-badge
+              :count="unseenCount"
+              :overflow-count="99"
+              size="small"
+              :offset="[-4, 4]"
+            >
+              <img
+                v-if="latestThumb"
+                :src="latestThumb"
+                class="tile-thumb"
+                :title="latestName"
+                alt=""
+              />
+              <div v-else class="tile-thumb tile-thumb-empty">
+                <PictureOutlined />
+              </div>
+            </a-badge>
+          </a-tooltip>
+          <div class="tile-desc">{{ $t('截图记录') }}</div>
+        </div>
       </div>
 
       <!-- 屏幕常亮 -->
@@ -1560,18 +1590,69 @@ function deviceSubtitle(d: AdbDevice) {
   align-self: flex-start;
 }
 
-/* ---- 截图记录 ---- */
-.tile-open-guard {
-  margin-top: 0;
+/* ---- 截图磁贴：左右两半 ---- */
+.tile-split {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  cursor: default;
+  overflow: hidden;
 }
-.tile-open {
-  font-size: 16px;
-  color: #999;
+.tile-split:hover {
+  border-color: #d9d9d9;
+  box-shadow: none;
+}
+.tile-half {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  min-width: 0;
+  transition: background-color 0.2s;
+}
+/* 左半：截图 */
+.tile-half-act {
+  flex: 1;
+  justify-content: center;
   cursor: pointer;
-  padding: 2px;
+  border-right: 1px solid #f0f0f0;
 }
-.tile-open:hover {
-  color: #336666;
+.tile-half-act:hover {
+  background-color: #3366660d;
+}
+.tile-half-disabled {
+  cursor: wait;
+}
+/* 右半：最近一张缩略图，点开看全部 */
+.tile-half-shots {
+  width: 104px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.tile-half-shots:hover {
+  background-color: #3366660d;
+}
+.tile-thumb {
+  display: block;
+  max-height: 74px;
+  max-width: 68px;
+  border-radius: 3px;
+  box-shadow: 0 1px 4px #00000026;
+}
+.tile-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 74px;
+  color: #ccc;
+  font-size: 18px;
+  background-color: #fafafa;
+  box-shadow: none;
+  border: 1px dashed #e0e0e0;
 }
 .shots-bar {
   display: flex;

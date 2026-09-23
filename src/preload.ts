@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbScreencap: (serial?: string) => ipcRenderer.invoke('adb:screencap', serial),
   shotsCount: () => ipcRenderer.invoke('shots:count'),
   shotsList: () => ipcRenderer.invoke('shots:list'),
+  shotsLatest: () => ipcRenderer.invoke('shots:latest'),
   shotsRead: (name: string) => ipcRenderer.invoke('shots:read', name),
   shotsSaveAs: (name: string) => ipcRenderer.invoke('shots:saveAs', name),
   shotsDelete: (name: string) => ipcRenderer.invoke('shots:delete', name),
