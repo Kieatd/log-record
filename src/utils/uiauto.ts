@@ -338,14 +338,21 @@ export async function fillDebugUrl(
   }
   steps.push('回读校验通过');
 
-  // 校验通过才点按钮，顺便把坐标缓存下来，下次走快路径
+  // 点按钮用「填完之后」这次 dump 的坐标，不要用填之前那次 ——
+  // 界面一旦有位移（键盘弹出、页面重排），旧坐标就点到别的地方去了。
+  // 填完之后本来就要 dump 一次做校验，顺便从这次里取按钮位置。
+  const btnAfter = findButtonNear(second.nodes, after, buttonText) || btn;
+  const tapCenter = centerOf(btnAfter);
+  if (tapCenter[0] !== btnCenter[0] || tapCenter[1] !== btnCenter[1]) {
+    steps.push(`注意：按钮位置从 ${btnCenter.join(',')} 变到 ${tapCenter.join(',')}，按新的点`);
+  }
   await runAdb(
     file,
-    [...base, 'shell', 'input', 'tap', String(btnCenter[0]), String(btnCenter[1])],
+    [...base, 'shell', 'input', 'tap', String(tapCenter[0]), String(tapCenter[1])],
     { timeout: 15000 },
   );
-  steps.push(`已点「${buttonText}」（位置 ${btnCenter.join(',')}）`);
-  coordCache.set(cacheKey, { input: inputCenter, button: btnCenter });
+  steps.push(`已点「${buttonText}」（位置 ${tapCenter.join(',')}）`);
+  coordCache.set(cacheKey, { input: inputCenter, button: tapCenter });
   lastFilledIp.set(options.serial || '', options.ip.trim());
   steps.push('坐标已缓存，下次会快很多');
 
