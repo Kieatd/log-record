@@ -653,6 +653,8 @@ const fillForm = reactive({
   packageName: '',
   /** IP 没变时也重填 */
   force: false,
+  /** 自动走到调试页的导航步骤，逗号分隔 */
+  navSteps: '组件示例,release button 开关',
   ...(() => {
     try {
       return JSON.parse(localStorage.getItem(FILL_KEY) || '{}');
@@ -695,6 +697,10 @@ async function fillDebugUrl() {
       `${window.screen.width}x${window.screen.height}`,
       fillForm.force,
       fillForm.packageName || undefined,
+      fillForm.navSteps
+        .split(/[,，\n]/)
+        .map((x: string) => x.trim())
+        .filter(Boolean),
     );
     for (const step of res.steps || []) pushLog(`  ${step}`, 'info');
     const cost = res.ms ? `（${(res.ms / 1000).toFixed(1)} 秒${res.cached ? '，走缓存' : ''}）` : '';
@@ -1683,6 +1689,18 @@ function deviceSubtitle(d: AdbDevice) {
             :options="pkgOptions"
             :loading="pkgLoading"
           />
+        </div>
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('导航步骤') }}</span>
+          <a-input
+            v-model:value="fillForm.navSteps"
+            size="small"
+            style="flex: 1"
+            placeholder="组件示例,release button 开关"
+          />
+        </div>
+        <div class="mk-tip">
+          {{ $t('自动走进调试页要依次点的按钮，逗号分隔；找不到就跳过（可能已经在后面某一页了）') }}
         </div>
         <div class="mk-row">
           <a-tooltip :title="$t('默认情况下，IP 没变就直接跳过填写（只重启 App），这样最快')">

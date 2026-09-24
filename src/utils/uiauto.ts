@@ -6,7 +6,7 @@
  *
  * 刻意不 import electron，方便脱离 Electron 直接用 node 测。
  */
-import { runAdb } from './adb';
+import { launchApp, runAdb } from './adb';
 
 export interface UiNode {
   text: string;
@@ -90,6 +90,95 @@ export async function dumpUi(
     return { ok: false, nodes: [], message: '读出来的界面结构不对' };
   }
   return { ok: true, nodes: parseUiDump(cat.stdout) };
+}
+
+/** 找文字（text 或 content-desc），取面积最小的那个（最具体） */
+export function findText(nodes: UiNode[], text: string): UiNode | null {
+  const hits = nodes.filter((n) => n.text.trim() === text || n.desc.trim() === text);
+  if (!hits.length) return null;
+  return hits.slice().sort((a, b) => area(a) - area(b))[0];
+}
+
+/**
+ * 自动走到 App 的调试页。
+ *
+ * 用户的路径是两步：App 首页点「组件示例」→ 再点「release button 开关」。
+ * 做成「找不到就跳过」：可能已经在后面某一页了（实测遇到过），硬点会点错东西。
+ * 每走一步都看一眼是不是已经到调试页（有输入框）。
+ * 整条路走不通就 force-stop 重来一次（回到首页再走）。
+ */
+export async function gotoDebugPage(
+  file: string,
+  options: {
+    serial?: string;
+    packageName?: string;
+    steps: string[];
+    waitMs?: number;
+  },
+): Promise<{ ok: boolean; message: string; steps: string[] }> {
+  const log: string[] = [];
+  const base = options.serial ? ['-s', options.serial] : [];
+  const waitMs = options.waitMs ?? 1500;
+
+  const alreadyThere = async () => {
+    const d = await dumpUi(file, options.serial);
+    return d.ok && !!findInput(d.nodes);
+  };
+
+  if (await alreadyThere()) {
+    log.push('已经在调试页了，不用走导航');
+    return { ok: true, message: '已在调试页', steps: log };
+  }
+
+  const walk = async () => {
+    for (const step of options.steps) {
+      const d = await dumpUi(file, options.serial);
+      if (!d.ok) {
+        log.push(`读界面失败：${d.message}`);
+        return false;
+      }
+      let hit = findText(d.nodes, step);
+      if (!hit) {
+        // 可能在屏幕外 —— 往下滚一屏再找（实测「release button 开关」
+        // 就在 demo 导航页的下半部分，不滚看不到）
+        for (let i = 0; i < 5 && !hit; i++) {
+          await runAdb(
+            file,
+            [...base, 'shell', 'input', 'swipe', '540', '1600', '540', '700', '300'],
+            { timeout: 15000 },
+          );
+          await new Promise((r) => setTimeout(r, 600));
+          const again = await dumpUi(file, options.serial);
+          if (again.ok) hit = findText(again.nodes, step);
+        }
+        if (hit) log.push(`「${step}」在屏幕外，滚动后才找到`);
+      }
+      if (!hit) {
+        log.push(`没看到「${step}」，跳过（可能已经在后面某一页）`);
+        continue;
+      }
+      const c = centerOf(hit);
+      await runAdb(file, [...base, 'shell', 'input', 'tap', String(c[0]), String(c[1])], {
+        timeout: 15000,
+      });
+      log.push(`点了「${step}」（${c.join(',')}）`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    return await alreadyThere();
+  };
+
+  if (await walk()) return { ok: true, message: '已走到调试页', steps: log };
+
+  if (options.packageName) {
+    log.push('第一次没走到，重启 App 回到首页再试一次');
+    await runAdb(file, [...base, 'shell', 'am', 'force-stop', options.packageName], {
+      timeout: 15000,
+    });
+    await launchApp(file, options.packageName, { serial: options.serial });
+    await new Promise((r) => setTimeout(r, 5000));
+    if (await walk()) return { ok: true, message: '重启后走到了调试页', steps: log };
+  }
+  return { ok: false, message: '没能自动走到调试页，请手动打开后再试', steps: log };
 }
 
 /** 找一个输入框（优先当前已聚焦的） */
@@ -281,6 +370,10 @@ export async function fillDebugUrl(
     screenKey?: string;
     /** 强制重填（哪怕 IP 没变） */
     force?: boolean;
+    /** 目标包名（走导航时要重启它，也要用它判断跑没跑出去） */
+    packageName?: string;
+    /** 自动走到调试页的导航步骤（按顺序点，找不到就跳过） */
+    navSteps?: string[];
   },
 ): Promise<FillResult> {
   const started = Date.now();
@@ -320,6 +413,21 @@ export async function fillDebugUrl(
     cached: !!cached,
   });
 
+  // ---- 先走导航（如果配了）----
+  // 放在快慢路径之前：导航结束时已经确认「现在就在调试页」，
+  // 后面无论是快路径还是慢路径都安全。
+  // （原来放在慢路径里，导致走快路径时根本不导航 —— 如果 App 停在首页，
+  //   缓存坐标就会点到别的地方去。）
+  if (options.navSteps && options.navSteps.length) {
+    const nav = await gotoDebugPage(file, {
+      serial: options.serial,
+      packageName: options.packageName,
+      steps: options.navSteps,
+    });
+    for (const l of nav.steps) steps.push(`[导航] ${l}`);
+    if (!nav.ok) return done({ ok: false, message: nav.message, steps, actual: '' });
+  }
+
   // ---- 快路径：坐标有缓存，一条 shell 命令全做完 ----
   if (cached) {
     const gotToastFast = await tapAndCheckToast(
@@ -349,10 +457,11 @@ export async function fillDebugUrl(
     });
   }
 
-  // ---- 慢路径（第一次）：先唤醒屏幕，再 dump 找位置 ----
+  // ---- 慢路径（第一次）：先唤醒屏幕 ----
   // 息屏时 uiautomator 拿到的是空结构，会误报「没找到输入框」，
   // 所以先点亮，并且把屏幕状态单独报出来（息屏/锁屏是最常见的失败原因）
   await runAdb(file, [...base, 'shell', 'input', 'keyevent', '224'], { timeout: 10000 });
+
   const wake = await runAdb(file, [...base, 'shell', 'dumpsys', 'power'], { timeout: 15000 });
   const awake = /mWakefulness=Awake/.test(wake.stdout + wake.stderr);
   if (!awake) {

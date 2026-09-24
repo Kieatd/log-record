@@ -309,4 +309,6 @@ export default {
   'monkey 跑出目标应用了（当前是': 'Monkey left the target app (now on',
   '已自动停止': 'stopped automatically',
   'monkey 跑出目标应用了，已自动停止': 'Monkey left the target app — stopped automatically',
+  '导航步骤': 'Navigation steps',
+  '自动走进调试页要依次点的按钮，逗号分隔；找不到就跳过（可能已经在后面某一页了）': 'Buttons to tap in order to reach the debug page, comma separated; missing ones are skipped (you may already be past them)',
 };
