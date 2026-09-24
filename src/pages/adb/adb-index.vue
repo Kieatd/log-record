@@ -21,6 +21,7 @@ import {
   CheckCircleFilled,
   DeleteOutlined,
   DesktopOutlined,
+  EditOutlined,
   FolderOpenOutlined,
   CloseCircleFilled,
   ExclamationCircleFilled,
@@ -654,6 +655,78 @@ const pkgOptions = computed(() =>
     label: appLabels.value[p] ? `${appLabels.value[p]} (${p})` : p,
   })),
 );
+
+/* ---------------- 一键填调试地址 ---------------- */
+
+const fillBusy = ref(false);
+const fillOpen = ref(false);
+const FILL_KEY = 'Log Record$$fillConfig';
+const fillForm = reactive({
+  /** 按钮上的文字，调试页里那个按钮 */
+  buttonText: '设置',
+  /** 填完要重启哪个 App */
+  packageName: '',
+  ...(() => {
+    try {
+      return JSON.parse(localStorage.getItem(FILL_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  })(),
+});
+watch(
+  () => ({ ...fillForm }),
+  (v) => localStorage.setItem(FILL_KEY, JSON.stringify(v)),
+  { deep: true },
+);
+
+function openFillSettings() {
+  fillOpen.value = true;
+  if (!pkgList.value.length) loadPackages();
+}
+
+/**
+ * 一键：把本机 IP 填进 App 调试页的输入框、点「设置」、再重启 App。
+ *
+ * 前提：手机上那个调试页已经打开、屏幕是亮的（这两个我们没法代劳）。
+ * 走 uiautomator，不改 App 也不需要 root。
+ */
+async function fillDebugUrl() {
+  if (!ready.value) {
+    message.warning(i18n.t('先插上线，选中一台设备'));
+    return;
+  }
+  fillBusy.value = true;
+  try {
+    const host = proxyHost.value || (await api.getIPAddress());
+    proxyHost.value = host;
+    pushLog(`${i18n.t('正在把')} ${host} ${i18n.t('填进 App 的调试地址')}…`, 'info');
+    const res = await api.uiautoFillDebugUrl(
+      host,
+      currentSerial.value,
+      fillForm.buttonText,
+    );
+    for (const step of res.steps || []) pushLog(`  ${step}`, 'info');
+    pushLog(res.message, res.ok ? 'ok' : 'err');
+    if (!res.ok) {
+      message.error(res.message);
+      return;
+    }
+    message.success(res.message);
+
+    if (fillForm.packageName) {
+      pushLog(`${i18n.t('重启')} ${fillForm.packageName}…`, 'info');
+      const r = await api.proxyRestartApp(fillForm.packageName, currentSerial.value);
+      pushLog(r.message, r.ok ? 'ok' : 'err');
+      if (r.ok) message.success(i18n.t('已重启，电脑上应该能收到了'));
+      else message.warning(r.message);
+    } else {
+      message.info(i18n.t('地址填好了，记得重启 App 才生效'));
+    }
+  } finally {
+    fillBusy.value = false;
+  }
+}
 
 /* ---------------- 抓包代理 ---------------- */
 
@@ -1526,6 +1599,28 @@ function deviceSubtitle(d: AdbDevice) {
         </div>
       </div>
 
+      <!-- 一键填调试地址：左边填+点设置，右边设置 -->
+      <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
+        <div
+          class="tile-half tile-half-act"
+          :class="{ 'tile-half-disabled': fillBusy }"
+          @click="ready && !fillBusy && fillDebugUrl()"
+        >
+          <div class="tile-icon">
+            <LoadingOutlined v-if="fillBusy" spin />
+            <EditOutlined v-else />
+          </div>
+          <div class="tile-title">{{ $t('填调试地址') }}</div>
+          <div class="tile-desc">
+            {{ $t('打开 App 调试页后点这里') }}
+          </div>
+        </div>
+        <div class="tile-half tile-half-shots" @click="openFillSettings">
+          <SettingOutlined class="tile-open" />
+          <div class="tile-desc">{{ $t('设置') }}</div>
+        </div>
+      </div>
+
       <!-- 抓包代理：左边一键设置+重启，右边设置 -->
       <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
         <div
@@ -1694,6 +1789,47 @@ function deviceSubtitle(d: AdbDevice) {
         <span class="un-count">
           {{ filteredPkgs.length }} / {{ pkgList.length }}
         </span>
+      </div>
+    </a-modal>
+
+    <!-- 一键填地址的设置 -->
+    <a-modal
+      v-model:open="fillOpen"
+      :title="$t('填调试地址设置')"
+      :footer="null"
+      width="460px"
+    >
+      <div class="mk-form">
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('要填的地址') }}</span>
+          <span class="mk-value">{{ proxyHost || $t('读取中…') }}</span>
+        </div>
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('按钮文字') }}</span>
+          <a-input v-model:value="fillForm.buttonText" size="small" style="flex: 1" placeholder="设置" />
+        </div>
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('填完重启') }}</span>
+          <a-select
+            v-model:value="fillForm.packageName"
+            show-search
+            allow-clear
+            size="small"
+            style="flex: 1"
+            :placeholder="pkgLoading ? $t('读取应用列表…') : $t('建议选上：填完自动重启这个 App')"
+            :options="pkgOptions"
+            :loading="pkgLoading"
+          />
+        </div>
+        <div class="mk-tip">
+          {{ $t('用法：先在手机上把 App 的调试页打开（就是填调试Url那个页面），再点磁贴左半边。它会自动找到输入框、清空、填上本机 IP、点按钮，最后重启 App') }}
+        </div>
+        <div class="mk-tip">
+          {{ $t('填完会回读一次输入框内容做校验，不对就不会去点按钮') }}
+        </div>
+      </div>
+      <div class="mk-foot">
+        <a-button size="small" @click="fillOpen = false">{{ $t('关闭') }}</a-button>
       </div>
     </a-modal>
 
