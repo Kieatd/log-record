@@ -20,6 +20,15 @@ export interface MonkeyOptions {
   seed?: number;
   ignoreCrashes?: boolean;
   ignoreTimeouts?: boolean;
+  /**
+   * 只在应用内操作：把 syskeys(HOME/音量)、majornav(BACK/MENU)、appswitch(切应用)
+   * 的配比归零。
+   *
+   * monkey 默认配比里 majornav 占 15%、syskeys 占 2%、appswitch 占 10%，
+   * 也就是说有近两成的概率会按 HOME/BACK 或切换应用 —— 跑一会儿必然被踢回桌面。
+   * 注意 -p 只限制能访问哪些 Activity，管不住这些按键。
+   */
+  stayInApp?: boolean;
   onOutput?: (line: string) => void;
   /** 每收到一个事件行回调一次，用来算进度 */
   onEvent?: (events: number) => void;
@@ -75,6 +84,10 @@ export function buildMonkeyArgs(options: MonkeyOptions): string[] {
   if (options.seed !== undefined) args.push('-s', String(options.seed));
   if (options.ignoreCrashes !== false) args.push('--ignore-crashes');
   if (options.ignoreTimeouts !== false) args.push('--ignore-timeouts');
+  if (options.stayInApp !== false) {
+    // 归零之后 monkey 会把剩余配比重新分配，所以还是能正常压测
+    args.push('--pct-syskeys', '0', '--pct-majornav', '0', '--pct-appswitch', '0');
+  }
   // -v 会每个事件打一行，用它算进度
   args.push('-v');
   args.push(String(options.count ?? 1000));

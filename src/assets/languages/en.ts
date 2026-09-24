@@ -257,4 +257,7 @@ export default {
   '先选一个要测的应用': 'Pick an app to test first',
   '点这里开始跑': 'Click to run',
   '插线开启一次，之后可拔线': 'Enable once while plugged in, then unplug',
+  '只在应用内操作（不发 BACK/HOME）': 'Stay inside the app (no BACK/HOME)',
+  'monkey 默认有相当比例的事件是 BACK/HOME/切换应用，跑一会儿就会回到桌面；勾上就只发点按滑动这类应用内操作': 'By default a large share of monkey events are BACK / HOME / app-switch, so it will drop you back to the launcher. Tick this to only send in-app events like taps and swipes',
+  '不勾「只在应用内操作」的话，它还会按 BACK/HOME 和切换应用，那是 monkey 的默认行为': 'Without this, monkey also presses BACK/HOME and switches apps — that is monkey default behaviour',
 };

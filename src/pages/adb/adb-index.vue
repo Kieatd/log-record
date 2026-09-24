@@ -673,6 +673,9 @@ const monkeyForm = reactive({
   seed: 0,
   ignoreCrashes: true,
   ignoreTimeouts: true,
+  // 默认只在应用内操作：monkey 默认配比里 BACK/HOME/切应用占了很大一块，
+  // 跑一会儿必然把人踢回桌面（实测 1500 事件会掉到桌面 6 次）
+  stayInApp: true,
   ...(() => {
     try {
       return JSON.parse(localStorage.getItem(MONKEY_KEY) || '{}');
@@ -725,9 +728,18 @@ async function startMonkeyRun() {
       return;
     }
     monkeyRunning.value = true;
+    // 回显真实参数，别只写一半 —— 之前漏了 stayInApp 那三个归零参数，
+    // 日志里看着和实际跑的对不上
+    const flags = monkeyForm.stayInApp
+      ? ' --pct-syskeys 0 --pct-majornav 0 --pct-appswitch 0'
+      : '';
     pushLog(
       `$ adb -s ${currentSerial.value} shell monkey -p ${monkeyForm.packageName}` +
-        ` --throttle ${monkeyForm.throttle} -s ${monkeyForm.seed} -v ${monkeyForm.count}`,
+        ` --throttle ${monkeyForm.throttle} -s ${monkeyForm.seed}` +
+        (monkeyForm.ignoreCrashes ? ' --ignore-crashes' : '') +
+        (monkeyForm.ignoreTimeouts ? ' --ignore-timeouts' : '') +
+        flags +
+        ` -v ${monkeyForm.count}`,
       'info',
     );
     if (monkeyTimer) clearInterval(monkeyTimer);
@@ -1601,8 +1613,20 @@ function deviceSubtitle(d: AdbDevice) {
           <a-checkbox v-model:checked="monkeyForm.ignoreCrashes">{{ $t('忽略崩溃继续跑') }}</a-checkbox>
           <a-checkbox v-model:checked="monkeyForm.ignoreTimeouts">{{ $t('忽略无响应继续跑') }}</a-checkbox>
         </div>
+        <div class="mk-row">
+          <a-tooltip
+            :title="$t('monkey 默认有相当比例的事件是 BACK/HOME/切换应用，跑一会儿就会回到桌面；勾上就只发点按滑动这类应用内操作')"
+          >
+            <a-checkbox v-model:checked="monkeyForm.stayInApp">
+              {{ $t('只在应用内操作（不发 BACK/HOME）') }}
+            </a-checkbox>
+          </a-tooltip>
+        </div>
         <div class="mk-tip">
           {{ $t('monkey 会往应用里随机点按滑动，用来跑稳定性；输出里出现 CRASH 会被标红') }}
+        </div>
+        <div class="mk-tip">
+          {{ $t('不勾「只在应用内操作」的话，它还会按 BACK/HOME 和切换应用，那是 monkey 的默认行为') }}
         </div>
       </div>
       <div class="mk-foot">
@@ -1615,6 +1639,7 @@ function deviceSubtitle(d: AdbDevice) {
             startMonkeyRun();
           "
         >
+          <PlayCircleOutlined />
           {{ $t('开始') }}
         </a-button>
       </div>
