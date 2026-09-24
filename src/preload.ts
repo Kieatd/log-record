@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('monkey:event', (_e, v) => callback(v)),
   onMonkeyClosed: (callback: any) =>
     ipcRenderer.on('monkey:closed', (_e, v) => callback(v)),
+  onMonkeyEscaped: (callback: any) =>
+    ipcRenderer.on('monkey:escaped', (_e, v) => callback(v)),
 
   /* ---------------- 快速传文件 ---------------- */
   pushPick: () => ipcRenderer.invoke('push:pick'),

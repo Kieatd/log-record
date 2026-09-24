@@ -576,11 +576,16 @@ const createWindow = () => {
         onOutput: (line) => mainWindow.webContents.send('monkey:output', line),
         onEvent: (n) => mainWindow.webContents.send('monkey:event', n),
         onClose: (code) => mainWindow.webContents.send('monkey:closed', code),
+        onEscaped: (top) => mainWindow.webContents.send('monkey:escaped', top),
       });
     },
   );
 
-  ipcMain.handle('monkey:stop', () => ({ ok: stopMonkey() }));
+  ipcMain.handle('monkey:stop', async () => {
+    const info = currentAdb();
+    await stopMonkey(info.found ? info.file : undefined, undefined);
+    return { ok: true };
+  });
 
   /* ---------------- 快速传文件 ---------------- */
 

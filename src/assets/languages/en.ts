@@ -306,4 +306,7 @@ export default {
   '没看到成功提示，按钮可能没被响应': 'No success toast seen — the button may not have responded',
   '设置成功（App 弹了提示）': 'Set successfully (the app showed a toast)',
   '没看到 App 的提示，按钮可能没被响应': 'No toast from the app — the button may not have responded',
+  'monkey 跑出目标应用了（当前是': 'Monkey left the target app (now on',
+  '已自动停止': 'stopped automatically',
+  'monkey 跑出目标应用了，已自动停止': 'Monkey left the target app — stopped automatically',
 };

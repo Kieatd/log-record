@@ -1127,6 +1127,17 @@ onMounted(async () => {
   if (api.onMonkeyEvent) {
     api.onMonkeyEvent((n: number) => (monkeyActions.value = n));
   }
+  if (api.onMonkeyEscaped) {
+    api.onMonkeyEscaped((top: string) => {
+      pushLog(`${i18n.t('monkey 跑出目标应用了（当前是')} ${top}），${i18n.t('已自动停止')}`, 'err');
+      message.warning(i18n.t('monkey 跑出目标应用了，已自动停止'));
+      monkeyRunning.value = false;
+      if (monkeyTimer) {
+        clearInterval(monkeyTimer);
+        monkeyTimer = null;
+      }
+    });
+  }
   if (api.onMonkeyClosed) {
     api.onMonkeyClosed(() => {
       monkeyRunning.value = false;

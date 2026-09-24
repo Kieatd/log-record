@@ -7,6 +7,7 @@
  * 刻意不 import electron，路径由调用方传进来，方便脱离 Electron 直接用 node 测。
  */
 import { spawn } from 'child_process';
+import { runAdb } from './adb';
 
 export interface MonkeyOptions {
   serial?: string;
@@ -33,6 +34,8 @@ export interface MonkeyOptions {
   /** 每收到一个事件行回调一次，用来算进度 */
   onEvent?: (events: number) => void;
   onClose?: (code: number | null) => void;
+  /** 跑出目标应用时回调（看门狗触发） */
+  onEscaped?: (topPackage: string) => void;
 }
 
 interface Job {
@@ -85,8 +88,20 @@ export function buildMonkeyArgs(options: MonkeyOptions): string[] {
   if (options.ignoreCrashes !== false) args.push('--ignore-crashes');
   if (options.ignoreTimeouts !== false) args.push('--ignore-timeouts');
   if (options.stayInApp !== false) {
-    // 归零之后 monkey 会把剩余配比重新分配，所以还是能正常压测
-    args.push('--pct-syskeys', '0', '--pct-majornav', '0', '--pct-appswitch', '0');
+    // 归零之后 monkey 会把剩余配比重新分配，所以还是能正常压测。
+    //
+    // 除了 HOME/BACK（syskeys/majornav）和切应用（appswitch），
+    // 方向键（nav）也要归零：它会把焦点移到导航栏上，
+    // 再一个回车就出去了（实测 stayInApp 只关三个还是会跑到桌面）。
+    // trackball / flip 也一并关掉，只留点按、滑动、缩放、旋转。
+    args.push(
+      '--pct-syskeys', '0',
+      '--pct-majornav', '0',
+      '--pct-appswitch', '0',
+      '--pct-nav', '0',
+      '--pct-trackball', '0',
+      '--pct-flip', '0',
+    );
   }
   // -v 会每个事件打一行，用它算进度
   args.push('-v');
@@ -99,6 +114,72 @@ export function buildMonkeyArgs(options: MonkeyOptions): string[] {
  * 开始跑 monkey。
  * 同一时间只允许一个，重复调用会先停掉上一个。
  */
+/**
+ * 杀掉手机上正在跑的 monkey。
+ *
+ * 必须单独做这一步：monkey 是手机上 app_process 起的 Java 程序，
+ * 本机的 adb 进程被杀掉，它不会跟着死（实测：本机 kill 之后手机上还在跑）。
+ * 实测 pidof / pkill 用全名 com.android.commands.monkey 有效。
+ */
+export async function killMonkeyOnDevice(
+  file: string,
+  serial?: string,
+): Promise<boolean> {
+  const base = serial ? ['-s', serial] : [];
+  const res = await runAdb(
+    file,
+    [...base, 'shell', 'pkill -9 -f com.android.commands.monkey'],
+    { timeout: 15000 },
+  );
+  // pkill 没匹配到会返回非 0，所以再用 ps 确认一下
+  const check = await runAdb(file, [...base, 'shell', 'ps', '-A'], { timeout: 15000 });
+  const alive = (check.stdout + check.stderr)
+    .split(/\r?\n/)
+    .some((l) => /monkey/i.test(l) && !/grep/.test(l));
+  return !alive;
+}
+
+/** 当前顶层的包名，看门狗要用 */
+export async function currentTopPackage(
+  file: string,
+  serial?: string,
+): Promise<string> {
+  const base = serial ? ['-s', serial] : [];
+  const res = await runAdb(
+    file,
+    [
+      ...base,
+      'shell',
+      'dumpsys activity activities | grep -m1 mResumedActivity',
+    ],
+    { timeout: 15000 },
+  );
+  const m = (res.stdout + res.stderr).match(/u0\s+([\w.]+)\//);
+  return m ? m[1] : '';
+}
+
+/** 开/关沉浸模式（把状态栏和导航栏藏起来，减少 monkey 点到导航栏跑出去的几率） */
+export async function setImmersive(
+  file: string,
+  on: boolean,
+  serial?: string,
+): Promise<void> {
+  const base = serial ? ['-s', serial] : [];
+  await runAdb(
+    file,
+    [
+      ...base,
+      'shell',
+      'settings',
+      'put',
+      'global',
+      'policy_control',
+      on ? 'immersive.full=*' : 'null',
+    ],
+    { timeout: 15000 },
+  );
+}
+
 export function startMonkey(
   file: string,
   options: MonkeyOptions,
@@ -141,22 +222,55 @@ export function startMonkey(
   child.on('close', (code) => {
     if (buffer.trim()) options.onOutput?.(buffer.trim());
     if (job === current) job = null;
+    if (watchdog) clearInterval(watchdog);
     options.onClose?.(code);
   });
+
+  // 开沉浸模式（尽量少给 monkey 点到导航栏的机会）
+  setImmersive(file, true, options.serial).catch(() => {});
+  // 唤醒屏幕
+  runAdb(file, [...(options.serial ? ['-s', options.serial] : []), 'shell', 'input', 'keyevent', '224'], {
+    timeout: 10000,
+  }).catch(() => {});
+
+  // 看门狗：跑出目标应用就自动停。
+  // monkey 的触摸是随机落在整个屏幕上的，点到底部导航栏就是 HOME，
+  // 光靠关事件类别拦不住，所以直接盯着顶层应用，跑出去就停。
+  const watchdog = setInterval(async () => {
+    if (job !== current || current.canceled) return;
+    const top = await currentTopPackage(file, options.serial);
+    if (!top) return;
+    if (top !== options.packageName) {
+      options.onOutput?.(
+        `⚠️ 跑出目标应用了（当前顶层是 ${top}），已自动停止`,
+      );
+      await stopMonkey(file, options.serial);
+      options.onEscaped?.(top);
+    }
+  }, 2000);
 
   return { ok: true, message: 'monkey 已开始' };
 }
 
-/** 停掉正在跑的 monkey */
-export function stopMonkey(): boolean {
+/**
+ * 停掉正在跑的 monkey：本机 adb 进程和手机上的进程都要杀。
+ * 只杀本机的话手机上会继续乱点（实测踩过）。
+ */
+export async function stopMonkey(file?: string, serial?: string): Promise<boolean> {
   const current = job;
-  if (!current) return false;
-  current.canceled = true;
   job = null;
-  try {
-    current.child.kill('SIGKILL');
-  } catch {
-    /* ignore */
+  if (current) {
+    current.canceled = true;
+    try {
+      current.child.kill('SIGKILL');
+    } catch {
+      /* ignore */
+    }
   }
-  return true;
+  if (file) {
+    await killMonkeyOnDevice(file, serial);
+    await setImmersive(file, false, serial);
+    return true;
+  }
+  return !!current;
 }
