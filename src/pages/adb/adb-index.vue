@@ -20,7 +20,6 @@ import {
   CameraOutlined,
   CheckCircleFilled,
   DeleteOutlined,
-  DesktopOutlined,
   EditOutlined,
   FolderOpenOutlined,
   CloseCircleFilled,
@@ -167,7 +166,6 @@ const autoStayOnDone = new Set<string>();
 
 // 投屏面板常驻在右侧，不提供收起 —— 这就是想要的默认布局
 const mirrorRunning = ref(false);
-const mirrorStarting = ref(false);
 const mirrorRef = ref<{ start: () => void; stop: () => Promise<void> } | null>(null);
 
 const stayAwake = ref<StayAwakeState | null>(null);
@@ -411,21 +409,6 @@ async function onDrop(e: DragEvent) {
 }
 
 /* ---------------- 投屏 ---------------- */
-
-/**
- * 磁贴上的开关控制投屏本身（面板常驻，不用管显隐）。
- */
-async function toggleMirror() {
-  if (!ready.value) {
-    message.warning(i18n.t('先插上线，选中一台设备'));
-    return;
-  }
-  if (mirrorRunning.value) {
-    await mirrorRef.value?.stop();
-    return;
-  }
-  mirrorRef.value?.start();
-}
 
 // 这里刻意不做「设备就绪就自动投屏」：面板默认在，但投屏必须用户自己点。
 // 否则一插上手机就悄悄在手机上起一个服务，不合适。
@@ -1432,30 +1415,6 @@ function deviceSubtitle(d: AdbDevice) {
         </span>
       </div>
 
-      <!-- 投屏 -->
-      <div
-        class="tile"
-        :class="{ 'tile-disabled': !ready, 'tile-on': mirrorRunning }"
-        @click="toggleMirror"
-      >
-        <div class="tile-head">
-          <div class="tile-icon">
-            <DesktopOutlined />
-          </div>
-          <a-switch
-            size="small"
-            :checked="mirrorRunning"
-            :disabled="!ready"
-            :loading="mirrorStarting"
-            @click.stop="toggleMirror"
-          />
-        </div>
-        <div class="tile-title">{{ $t('投屏操控') }}</div>
-        <div class="tile-desc">
-          {{ mirrorRunning ? $t('已连接，右边就是手机画面') : $t('在电脑上看手机画面并直接操作') }}
-        </div>
-      </div>
-
       <!-- 无线连接 -->
       <div class="tile" :class="{ 'tile-disabled': !ready }">
         <div class="tile-icon"><WifiOutlined /></div>
@@ -1916,7 +1875,6 @@ function deviceSubtitle(d: AdbDevice) {
         :serial="currentSerial"
         @log="(t: string) => pushLog(t)"
         @running="(v: boolean) => (mirrorRunning = v)"
-        @starting="(v: boolean) => (mirrorStarting = v)"
       />
     </div>
   </div>

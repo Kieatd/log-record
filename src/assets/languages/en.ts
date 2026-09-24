@@ -221,7 +221,6 @@ export default {
   '新': 'New',
   '张没看过': 'unseen',
   '点这里截取手机画面': 'Click to capture the screen',
-  '已连接，右边就是手机画面': 'Connected — the phone screen is on the right',
   '正在连接…': 'Connecting…',
   '还没开始投屏': 'Mirror is not running',
   '开始投屏': 'Start mirroring',
