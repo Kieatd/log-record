@@ -122,13 +122,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbInstallTimes: (serial?: string) => ipcRenderer.invoke('adb:installTimes', serial),
   uiautoFillDebugUrl: (ip: string, serial?: string, buttonText?: string) =>
     ipcRenderer.invoke('uiauto:fillDebugUrl', { ip, serial, buttonText }),
-  proxyGet: (serial?: string) => ipcRenderer.invoke('proxy:get', serial),
-  proxySet: (value: string, serial?: string) =>
-    ipcRenderer.invoke('proxy:set', { value, serial }),
-  proxyRestartApp: (packageName: string, serial?: string) =>
-    ipcRenderer.invoke('proxy:restartApp', { packageName, serial }),
-  proxyCheckPort: (host: string, port: number) =>
-    ipcRenderer.invoke('proxy:checkPort', { host, port }),
+  appRestart: (packageName: string, serial?: string) =>
+    ipcRenderer.invoke('app:restart', { packageName, serial }),
   adbAppLabels: (
     items: { packageName: string; apkPath: string }[],
     serial?: string,

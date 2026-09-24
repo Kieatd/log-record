@@ -512,61 +512,6 @@ export async function uninstallApp(
   return { ...judgeUninstall(raw), raw };
 }
 
-/* ------------------------------------------------------------------ */
-/* 全局 HTTP 代理（抓包用）                                            */
-/* ------------------------------------------------------------------ */
-
-/**
- * 读手机当前的全局 http_proxy。
- * 空字符串表示没设（或者是 :0，Android 用它表示"已关闭"）。
- */
-export async function getHttpProxy(
-  file: string,
-  serial?: string,
-): Promise<{ ok: boolean; value: string; message?: string }> {
-  const args = ['shell', 'settings', 'get', 'global', 'http_proxy'];
-  if (serial) args.unshift('-s', serial);
-  const res = await runAdb(file, args, { timeout: 15000 });
-  const raw = (res.stdout + res.stderr).trim();
-  if (/^null$|^$/.test(raw)) return { ok: true, value: '' };
-  if (raw === ':0') return { ok: true, value: '' };
-  return { ok: true, value: raw };
-}
-
-/**
- * 设置（或清除）手机全局 http_proxy。
- *
- * 不需要 root：adb shell 这个 uid 自带 WRITE_SECURE_SETTINGS 权限。
- * value 传空字符串就是关掉（写成 :0，这是 Android 约定的"关闭"值）。
- *
- * 注意：改完代理，已经跑着的 App 不一定立刻生效（连接池/原生网络栈会缓存），
- * 所以通常要配合重启目标 App，这也是用户原来手动在做的事。
- */
-export async function setHttpProxy(
-  file: string,
-  value: string,
-  serial?: string,
-): Promise<{ ok: boolean; message: string; value: string }> {
-  const target = value.trim() || ':0';
-  const args = ['shell', 'settings', 'put', 'global', 'http_proxy', target];
-  if (serial) args.unshift('-s', serial);
-  const res = await runAdb(file, args, { timeout: 15000 });
-  const raw = (res.stdout + res.stderr).trim();
-  // 写完再读一遍确认，settings put 失败时不一定报错
-  const after = await getHttpProxy(file, serial);
-  const want = value.trim();
-  const ok = want ? after.value === want : after.value === '';
-  return {
-    ok,
-    value: after.value,
-    message: ok
-      ? want
-        ? `代理已指向 ${want}`
-        : '代理已关闭'
-      : raw || '设置代理失败',
-  };
-}
-
 /** 重启一个已装应用：先强停，再按 LAUNCHER 拉起来 */
 export async function restartApp(
   file: string,

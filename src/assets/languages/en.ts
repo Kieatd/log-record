@@ -260,22 +260,22 @@ export default {
   '只在应用内操作（不发 BACK/HOME）': 'Stay inside the app (no BACK/HOME)',
   'monkey 默认有相当比例的事件是 BACK/HOME/切换应用，跑一会儿就会回到桌面；勾上就只发点按滑动这类应用内操作': 'By default a large share of monkey events are BACK / HOME / app-switch, so it will drop you back to the launcher. Tick this to only send in-app events like taps and swipes',
   '不勾「只在应用内操作」的话，它还会按 BACK/HOME 和切换应用，那是 monkey 的默认行为': 'Without this, monkey also presses BACK/HOME and switches apps — that is monkey default behaviour',
-  '抓包代理': 'Capture proxy',
-  '已指向': 'Pointing to',
-  '点一下指到本机并重启 App': 'Click to point at this PC and restart the app',
+
+
+
   '设置': 'Settings',
-  '抓包代理设置': 'Capture proxy settings',
-  '本机地址': 'This PC',
-  '代理端口': 'Proxy port',
-  '抓包工具里那个端口': 'the port your capture tool listens on',
-  '顺带重启': 'Also restart',
-  '可选：设完代理重启这个 App': 'Optional: restart this app after setting the proxy',
-  '代理已关闭': 'Proxy disabled',
-  '警告': 'Warning',
+
+
+
+
+
+
+
+
   '重启': 'Restarting',
-  '没有在监听，确认抓包工具开着吗': 'is not listening — is your capture tool running?',
-  '设置的是手机的全局 http_proxy，不需要 root；改完已经在跑的 App 不一定立刻生效，所以可以顺带重启一个 App': 'Sets the phone global http_proxy (no root needed). Apps already running may not pick it up immediately, so you can restart one here',
-  '不用了再点一次磁贴左半边就会关掉代理': 'Click the left half of the tile again to turn the proxy off',
+
+
+
   '填调试地址': 'Fill debug URL',
   '打开 App 调试页后点这里': 'Open the app debug page, then click here',
   '填调试地址设置': 'Fill debug URL settings',
@@ -289,4 +289,10 @@ export default {
   '地址填好了，记得重启 App 才生效': 'Address filled — remember to restart the app for it to take effect',
   '用法：先在手机上把 App 的调试页打开（就是填调试Url那个页面），再点磁贴左半边。它会自动找到输入框、清空、填上本机 IP、点按钮，最后重启 App': 'How to use: open the app debug page on the phone first (the one with the debug URL field), then click the left half of the tile. It finds the input, clears it, types this PC IP, taps the button, then restarts the app',
   '填完会回读一次输入框内容做校验，不对就不会去点按钮': 'After typing it reads the field back to verify; if it does not match it will not tap the button',
+
+
+
+
+
+
 };
