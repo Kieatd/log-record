@@ -255,4 +255,6 @@ export default {
   '手机上的接收目录': 'Destination folder on the phone',
   '默认放到 Download 目录，手机上打开「文件管理」就能看到': 'Defaults to Download, visible in the phone file manager',
   '先选一个要测的应用': 'Pick an app to test first',
+  '点这里开始跑': 'Click to run',
+  '插线开启一次，之后可拔线': 'Enable once while plugged in, then unplug',
 };

@@ -1358,13 +1358,13 @@ function deviceSubtitle(d: AdbDevice) {
       </div>
 
       <!-- 无线连接 -->
-      <div class="tile tile-wide" :class="{ 'tile-disabled': !ready }">
+      <div class="tile" :class="{ 'tile-disabled': !ready }">
         <div class="tile-icon"><WifiOutlined /></div>
-        <div class="tile-title">{{ $t('无线调试') }}</div>
-        <div class="tile-desc">
-          {{ $t('插线时点一次「开启」，之后拔线也能用') }}
-        </div>
-        <div class="tile-row">
+        <a-tooltip :title="$t('插线时点一次「开启」，之后拔线也能用')">
+          <div class="tile-title">{{ $t('无线调试') }}</div>
+        </a-tooltip>
+        <div class="tile-desc">{{ $t('插线开启一次，之后可拔线') }}</div>
+        <div class="tile-stack">
           <a-input
             v-model:value="wifiIp"
             size="small"
@@ -1372,20 +1372,22 @@ function deviceSubtitle(d: AdbDevice) {
             :disabled="!ready"
             @click.stop
           />
-          <a-button size="small" :disabled="!ready" :loading="busyWifi" @click.stop="enableWifi">
-            <UsbOutlined />
-            {{ $t('开启') }}
-          </a-button>
-          <a-button
-            size="small"
-            type="primary"
-            :disabled="!ready && !wifiIp"
-            :loading="busyWifi"
-            @click.stop="connectWifi"
-          >
-            <LinkOutlined />
-            {{ $t('连接') }}
-          </a-button>
+          <div class="tile-row">
+            <a-button size="small" :disabled="!ready" :loading="busyWifi" @click.stop="enableWifi">
+              <UsbOutlined />
+              {{ $t('开启') }}
+            </a-button>
+            <a-button
+              size="small"
+              type="primary"
+              :disabled="!ready && !wifiIp"
+              :loading="busyWifi"
+              @click.stop="connectWifi"
+            >
+              <LinkOutlined />
+              {{ $t('连接') }}
+            </a-button>
+          </div>
         </div>
       </div>
 
@@ -1417,7 +1419,7 @@ function deviceSubtitle(d: AdbDevice) {
       </div>
 
       <!-- Monkey 压测：左边开始，右边设置参数 -->
-      <div class="tile tile-wide tile-split" :class="{ 'tile-disabled': !ready }">
+      <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
         <div
           class="tile-half tile-half-act"
           :class="{ 'tile-half-disabled': monkeyStarting }"
@@ -1433,7 +1435,7 @@ function deviceSubtitle(d: AdbDevice) {
               {{ $t('运行中') }} · {{ $t('约') }} {{ monkeyActions }} {{ $t('个动作') }} ·
               {{ monkeyElapsedText() }}
             </template>
-            <template v-else>{{ $t('点这里开始随机点按测试') }}</template>
+            <template v-else>{{ $t('点这里开始跑') }}</template>
           </div>
         </div>
         <div class="tile-half tile-half-shots" @click="openMonkeySettings">
@@ -1444,7 +1446,7 @@ function deviceSubtitle(d: AdbDevice) {
 
       <!-- 传文件到手机 -->
       <div
-        class="tile tile-wide"
+        class="tile"
         :class="{ 'tile-drop': pushDragging, 'tile-disabled': !ready || pushing }"
         @dragover="onPushDragOver"
         @dragleave="onPushDragLeave"
@@ -1921,6 +1923,9 @@ function deviceSubtitle(d: AdbDevice) {
      两行都排满，右下角不会空一块 */
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 8px;
+  /* 统一行高：无线调试那格有输入框+按钮，实测内容需要 167px。
+     把最小行高定成 167，所有行就都一样高了（内容更多的行会自动长高） */
+  grid-auto-rows: minmax(167px, auto);
 }
 .tile {
   display: flex;
@@ -1982,6 +1987,13 @@ function deviceSubtitle(d: AdbDevice) {
   gap: 6px;
   margin-top: 6px;
   align-items: center;
+}
+/* 输入框 + 按钮在窄磁贴里放不下，改成上下堆叠 */
+.tile-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
 }
 /* 勾选框别跟着磁贴的鼠标手势走，只吃自己的点击 */
 .tile-check {
