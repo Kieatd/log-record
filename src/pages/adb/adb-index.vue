@@ -655,6 +655,100 @@ const pkgOptions = computed(() =>
   })),
 );
 
+/* ---------------- 抓包代理 ---------------- */
+
+/** 手机当前的全局 http_proxy（空 = 没设） */
+const proxyValue = ref('');
+const proxyBusy = ref(false);
+const proxyOpen = ref(false);
+/** 电脑 IP，标题栏那个；设代理时要拼进去 */
+const proxyHost = ref('');
+const PROXY_KEY = 'Log Record$$proxyConfig';
+const proxyForm = reactive({
+  port: 9000,
+  packageName: '',
+  ...(() => {
+    try {
+      return JSON.parse(localStorage.getItem(PROXY_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  })(),
+});
+watch(
+  () => ({ ...proxyForm }),
+  (v) => localStorage.setItem(PROXY_KEY, JSON.stringify(v)),
+  { deep: true },
+);
+
+async function loadProxy() {
+  if (!ready.value) {
+    proxyValue.value = '';
+    return;
+  }
+  const res = await api.proxyGet(currentSerial.value);
+  proxyValue.value = res?.value || '';
+  if (!proxyHost.value) proxyHost.value = await api.getIPAddress();
+}
+
+async function openProxySettings() {
+  proxyOpen.value = true;
+  if (!pkgList.value.length) await loadPackages();
+}
+
+/**
+ * 一键：把手机全局代理指到本机（+ 重启目标 App）。
+ * 已经指上了再点一次就关掉。
+ *
+ * 为什么还要重启 App：改完代理，已经在跑的 App 不一定立刻生效
+ * （连接池 / 原生网络栈会缓存），这就是用户原来手动在做的那一步。
+ */
+async function toggleProxy() {
+  if (!ready.value) {
+    message.warning(i18n.t('先插上线，选中一台设备'));
+    return;
+  }
+  proxyBusy.value = true;
+  try {
+    if (proxyValue.value) {
+      const res = await api.proxySet('', currentSerial.value);
+      proxyValue.value = res.value;
+      pushLog(res.message, res.ok ? 'ok' : 'err');
+      if (res.ok) message.success(i18n.t('代理已关闭'));
+      else message.error(res.message);
+      return;
+    }
+
+    if (!proxyHost.value) proxyHost.value = await api.getIPAddress();
+    const target = `${proxyHost.value}:${proxyForm.port}`;
+
+    // 先探一下电脑上那个端口在不在，不在的话设了代理手机会直接上不了网
+    const check = await api.proxyCheckPort(proxyHost.value, Number(proxyForm.port));
+    if (!check.ok) {
+      pushLog(`${i18n.t('警告')}：${target} ${i18n.t('没有在监听，确认抓包工具开着吗')}`, 'err');
+      message.warning(`${target} ${i18n.t('没有在监听，确认抓包工具开着吗')}`);
+    }
+
+    const res = await api.proxySet(target, currentSerial.value);
+    proxyValue.value = res.value;
+    pushLog(res.message, res.ok ? 'ok' : 'err');
+    if (!res.ok) {
+      message.error(res.message);
+      return;
+    }
+    message.success(res.message);
+
+    if (proxyForm.packageName) {
+      pushLog(`${i18n.t('重启')} ${proxyForm.packageName}…`, 'info');
+      const r = await api.proxyRestartApp(proxyForm.packageName, currentSerial.value);
+      pushLog(r.message, r.ok ? 'ok' : 'err');
+      if (!r.ok) message.warning(r.message);
+    }
+  } finally {
+    proxyBusy.value = false;
+  }
+}
+
 /* ---------------- monkey 压测 ---------------- */
 
 const monkeyOpen = ref(false);
@@ -1082,6 +1176,7 @@ onMounted(async () => {
   loadShotCount();
   loadLatestShot();
   await loadAdb();
+  proxyHost.value = await api.getIPAddress();
   await loadDevices();
   await loadStayAwake();
 });
@@ -1092,6 +1187,7 @@ onActivated(() => {
   // 切回来也刷一下截图记录：可能刚截过图或者删过图
   loadShotCount();
   loadLatestShot();
+  loadProxy();
 });
 
 onUnmounted(() => {
@@ -1430,6 +1526,31 @@ function deviceSubtitle(d: AdbDevice) {
         </div>
       </div>
 
+      <!-- 抓包代理：左边一键设置+重启，右边设置 -->
+      <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
+        <div
+          class="tile-half tile-half-act"
+          :class="{ 'tile-half-disabled': proxyBusy }"
+          @click="ready && !proxyBusy && toggleProxy()"
+        >
+          <div class="tile-icon">
+            <LoadingOutlined v-if="proxyBusy" spin />
+            <ApiOutlined v-else />
+          </div>
+          <div class="tile-title">{{ $t('抓包代理') }}</div>
+          <div class="tile-desc">
+            <template v-if="proxyValue">
+              {{ $t('已指向') }} {{ proxyValue }}
+            </template>
+            <template v-else>{{ $t('点一下指到本机并重启 App') }}</template>
+          </div>
+        </div>
+        <div class="tile-half tile-half-shots" @click="openProxySettings">
+          <SettingOutlined class="tile-open" />
+          <div class="tile-desc">{{ $t('设置') }}</div>
+        </div>
+      </div>
+
       <!-- Monkey 压测：左边开始，右边设置参数 -->
       <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
         <div
@@ -1573,6 +1694,54 @@ function deviceSubtitle(d: AdbDevice) {
         <span class="un-count">
           {{ filteredPkgs.length }} / {{ pkgList.length }}
         </span>
+      </div>
+    </a-modal>
+
+    <!-- 抓包代理设置 -->
+    <a-modal
+      v-model:open="proxyOpen"
+      :title="$t('抓包代理设置')"
+      :footer="null"
+      width="460px"
+    >
+      <div class="mk-form">
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('本机地址') }}</span>
+          <span class="mk-value">{{ proxyHost || $t('读取中…') }}:{{ proxyForm.port }}</span>
+        </div>
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('代理端口') }}</span>
+          <a-input-number
+            v-model:value="proxyForm.port"
+            :min="1"
+            :max="65535"
+            size="small"
+            style="flex: 1"
+          />
+          <span class="mk-hint">{{ $t('抓包工具里那个端口') }}</span>
+        </div>
+        <div class="mk-row">
+          <span class="mk-label">{{ $t('顺带重启') }}</span>
+          <a-select
+            v-model:value="proxyForm.packageName"
+            show-search
+            allow-clear
+            size="small"
+            style="flex: 1"
+            :placeholder="pkgLoading ? $t('读取应用列表…') : $t('可选：设完代理重启这个 App')"
+            :options="pkgOptions"
+            :loading="pkgLoading"
+          />
+        </div>
+        <div class="mk-tip">
+          {{ $t('设置的是手机的全局 http_proxy，不需要 root；改完已经在跑的 App 不一定立刻生效，所以可以顺带重启一个 App') }}
+        </div>
+        <div class="mk-tip">
+          {{ $t('不用了再点一次磁贴左半边就会关掉代理') }}
+        </div>
+      </div>
+      <div class="mk-foot">
+        <a-button size="small" @click="proxyOpen = false">{{ $t('关闭') }}</a-button>
       </div>
     </a-modal>
 
@@ -2251,6 +2420,12 @@ function deviceSubtitle(d: AdbDevice) {
 .mk-hint {
   font-size: 11px;
   color: #bbb;
+}
+.mk-value {
+  flex: 1;
+  font-size: 12px;
+  font-family: Menlo, Consolas, monospace;
+  color: #336666;
 }
 .mk-tip {
   font-size: 11px;

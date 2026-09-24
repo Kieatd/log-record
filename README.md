@@ -138,6 +138,7 @@ of switching to a terminal.
 | **Mirror & control** | A panel on the right shows the live phone screen, and you can click (tap), drag (swipe), scroll, and send keys to it. When the screen is off it says so and offers a wake button |
 | **Monkey stress test** | Click the left half to start random tapping/swiping inside a chosen app (stability testing); the right half opens the settings: target app (searchable list with app names), event count, throttle, seed (kept so you can reproduce), ignore crashes / ANRs. `CRASH` lines are highlighted in red |
 | **Send files to phone** | Drop files on the tile (or click to pick, multi-select supported) — progress bar and cancel included. Defaults to the `Download` folder; click the folder icon on the tile to change it |
+| **Capture proxy** | One click points the phone's global `http_proxy` at this PC (no root needed) and optionally restarts the target app — apps already running may not pick up a new proxy immediately, which used to be a manual step. The settings let you change the port and pick the app to restart; clicking the left half again turns the proxy off. Before setting it, the app checks whether that port is actually listening on this PC |
 | **Custom command** | Run adb shell commands with the output in the panel below |
 
 Raw output of every command is collected in the output panel at the bottom (green for

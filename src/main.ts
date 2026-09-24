@@ -43,7 +43,10 @@ import {
   listDevices,
   listPackages,
   loadCustomAdbPath,
+  getHttpProxy,
   readInstallTimes,
+  restartApp,
+  setHttpProxy,
   readInstalledAppLabels,
   resolveAdb,
   runAdb,
@@ -120,6 +123,7 @@ const createWindow = () => {
   ipcMain.handle('checkIsUpdate', () =>
     checkForUpgrade(author.name, name, version),
   );
+
 
 
 
@@ -425,6 +429,52 @@ const createWindow = () => {
       return listPackages(info.file, payload);
     },
   );
+
+  /* ---------------- 抓包代理（设置全局 http_proxy + 重启 App） ---------------- */
+
+  ipcMain.handle('proxy:get', async (_, serial?: string) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, value: '', message: info.error || '没找到 adb' };
+    return getHttpProxy(info.file, serial);
+  });
+
+  ipcMain.handle(
+    'proxy:set',
+    async (_, payload: { value: string; serial?: string }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, value: '', message: info.error || '没找到 adb' };
+      return setHttpProxy(info.file, payload.value, payload.serial);
+    },
+  );
+
+  ipcMain.handle(
+    'proxy:restartApp',
+    async (_, payload: { packageName: string; serial?: string }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return restartApp(info.file, payload.packageName, payload.serial);
+    },
+  );
+
+  // 检查电脑上那个代理端口有没有在监听：没监听的话设了代理手机会上不了网
+  ipcMain.handle('proxy:checkPort', async (_, payload: { host: string; port: number }) => {
+    const net = await import('net');
+    return new Promise((resolve) => {
+      const socket = net.connect({ host: payload.host, port: payload.port });
+      const done = (ok: boolean) => {
+        try {
+          socket.destroy();
+        } catch {
+          /* ignore */
+        }
+        resolve({ ok });
+      };
+      socket.setTimeout(1500);
+      socket.on('connect', () => done(true));
+      socket.on('timeout', () => done(false));
+      socket.on('error', () => done(false));
+    });
+  });
 
   ipcMain.handle('adb:installTimes', async (_, serial?: string) => {
     const info = currentAdb();
