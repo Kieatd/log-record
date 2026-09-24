@@ -303,4 +303,8 @@ export default {
   '已填入并点了设置（快）': 'Filled and tapped the button (fast)',
   '手机屏幕是黑的（息屏或锁屏），先按电源键点亮并解锁，再点这里': 'The phone screen is off (or locked) — wake and unlock it first, then click again',
   '当前界面上没找到输入框 —— 确认手机上打开的是 App 的调试页（填调试Url那个页面）': 'No input field found on screen — make sure the app debug page (the one with the debug URL field) is open on the phone',
+  '设置成功': 'Set successfully',
+  '没看到成功提示，按钮可能没被响应': 'No success toast seen — the button may not have responded',
+  '设置成功（App 弹了提示）': 'Set successfully (the app showed a toast)',
+  '没看到 App 的提示，按钮可能没被响应': 'No toast from the app — the button may not have responded',
 };

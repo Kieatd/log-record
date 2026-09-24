@@ -133,6 +133,49 @@ export function findButtonNear(
   return candidates.slice().sort((a, b) => area(a) - area(b))[0];
 }
 
+/**
+ * 数 dumpsys window 里 "u0 Toast}" 出现的行数。
+ *
+ * 为什么数行数而不是判断「有没有」：dumpsys 输出里本来就常年有几行历史记录
+ * （mLastWakeLockHoldingWindow / mHoldScreenWindow 之类），直接判断有没有永远是 true。
+ * 实测基线是 4 行，真弹 toast 时变成 7 行 —— 所以「超过基线」才是真的弹了。
+ *
+ * 也不用 uiautomator：toast 是独立窗口，不在当前窗口的层级里，dump 看不到。
+ */
+export async function countToastLines(file: string, serial?: string): Promise<number> {
+  const base = serial ? ['-s', serial] : [];
+  // 关键：在【手机上】数，只把数字传回来。
+  // 把整个 dumpsys 拉回电脑要好几 MB、2 秒以上，而 toast 只活 0.5 秒 ——
+  // 拉回来的路上它就没了（这是实测踩出来的）。
+  const res = await runAdb(
+    file,
+    [...base, 'shell', 'dumpsys window windows | grep -c "u0 Toast"'],
+    { timeout: 10000 },
+  );
+  const n = parseInt((res.stdout || '').trim(), 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+/**
+ * 记基线 → 点 → 连数几次，行数超过基线就说明弹了 toast。
+ *
+ * 之所以写得这么朴素（不用后台轮询）：后台闭包 + stop 的时序很难保证
+ * 最后一次判断能跑完，实测就是因此一直漏掉。设备侧 grep -c 只要 0.15 秒，
+ * 连数 5 次就能覆盖 toast 那 0.5 秒的存活期。
+ */
+export async function tapAndCheckToast(
+  file: string,
+  tap: () => Promise<void>,
+  options: { serial?: string } = {},
+): Promise<boolean> {
+  const baseline = await countToastLines(file, options.serial);
+  await tap();
+  for (let i = 0; i < 5; i++) {
+    if ((await countToastLines(file, options.serial)) > baseline) return true;
+  }
+  return false;
+}
+
 export interface FillResult {
   ok: boolean;
   message: string;
@@ -144,6 +187,8 @@ export interface FillResult {
   ms: number;
   /** 这次走的是快路径（用了缓存坐标，没 dump） */
   cached: boolean;
+  /** 点完按钮后有没有检测到 App 弹的提示（toast） */
+  gotToast?: boolean;
 }
 
 /**
@@ -209,7 +254,15 @@ function buildFillCommand(
     `input keyevent ${keycodes.join(' ')}`,
   ];
   if (!digitCodes) parts.push(`input text ${ip}`);
-  if (button) parts.push(`input tap ${button[0]} ${button[1]}`);
+  if (button) {
+    // 按钮必须点两次！
+    // input text 之后输入框还带着焦点，第一次点按钮只会「取消焦点」，
+    // 按钮的点击根本不会触发（实测：第一次点 count 不变，第二次才弹 toast）。
+    // 中间隔一下，免得被当成双击。
+    parts.push(`input tap ${button[0]} ${button[1]}`);
+    parts.push('sleep 0.5');
+    parts.push(`input tap ${button[0]} ${button[1]}`);
+  }
   return parts.join('; ');
 }
 
@@ -232,6 +285,16 @@ export async function fillDebugUrl(
 ): Promise<FillResult> {
   const started = Date.now();
   const steps: string[] = [];
+  if (!options.ip || !options.ip.trim()) {
+    return {
+      ok: false,
+      message: '没拿到要填的 IP',
+      steps,
+      actual: '',
+      ms: 0,
+      cached: false,
+    };
+  }
   const base = options.serial ? ['-s', options.serial] : [];
   const buttonText = options.buttonText || '设置';
   const cacheKey = `${options.serial || ''}:${options.screenKey || ''}:${buttonText}`;
@@ -259,18 +322,31 @@ export async function fillDebugUrl(
 
   // ---- 快路径：坐标有缓存，一条 shell 命令全做完 ----
   if (cached) {
-    await runAdb(
+    const gotToastFast = await tapAndCheckToast(
       file,
-      [
-        ...base,
-        'shell',
-        `input keyevent 224; ${buildFillCommand(cached.input, cached.button, options.ip, 24)}`,
-      ],
-      { timeout: 30000 },
+      async () => {
+        await runAdb(
+          file,
+          [
+            ...base,
+            'shell',
+            `input keyevent 224; ${buildFillCommand(cached.input, cached.button, options.ip, 24)}`,
+          ],
+          { timeout: 30000 },
+        );
+      },
+      { serial: options.serial },
     );
     steps.push('用缓存坐标直接完成（点击/清空/输入/点按钮）');
+    steps.push(gotToastFast ? '检测到 App 弹出了提示 ✅' : '没检测到提示（可能没点到）');
     lastFilledIp.set(options.serial || '', options.ip.trim());
-    return done({ ok: true, message: '已填入并点了设置（快）', steps, actual: options.ip });
+    return done({
+      ok: true,
+      message: gotToastFast ? '已设置成功（快）' : '已填入并点了设置（快）',
+      steps,
+      actual: options.ip,
+      gotToast: gotToastFast,
+    });
   }
 
   // ---- 慢路径（第一次）：先唤醒屏幕，再 dump 找位置 ----
@@ -346,15 +422,35 @@ export async function fillDebugUrl(
   if (tapCenter[0] !== btnCenter[0] || tapCenter[1] !== btnCenter[1]) {
     steps.push(`注意：按钮位置从 ${btnCenter.join(',')} 变到 ${tapCenter.join(',')}，按新的点`);
   }
-  await runAdb(
+  // 点两次：第一次只是取消输入框的焦点，第二次才真正点到按钮（实测）
+  const gotToast = await tapAndCheckToast(
     file,
-    [...base, 'shell', 'input', 'tap', String(tapCenter[0]), String(tapCenter[1])],
-    { timeout: 15000 },
+    async () => {
+      await runAdb(
+        file,
+        [...base, 'shell', 'input', 'tap', String(tapCenter[0]), String(tapCenter[1])],
+        { timeout: 15000 },
+      );
+      await new Promise((r) => setTimeout(r, 500));
+      await runAdb(
+        file,
+        [...base, 'shell', 'input', 'tap', String(tapCenter[0]), String(tapCenter[1])],
+        { timeout: 15000 },
+      );
+    },
+    { serial: options.serial },
   );
-  steps.push(`已点「${buttonText}」（位置 ${tapCenter.join(',')}）`);
+  steps.push(`已点「${buttonText}」（位置 ${tapCenter.join(',')}，点了两次：第一次取消焦点，第二次生效）`);
+  steps.push(gotToast ? '检测到 App 弹出了提示 ✅' : '没检测到提示（可能没点到）');
   coordCache.set(cacheKey, { input: inputCenter, button: tapCenter });
   lastFilledIp.set(options.serial || '', options.ip.trim());
   steps.push('坐标已缓存，下次会快很多');
 
-  return done({ ok: true, message: '已填入并点了设置', steps, actual });
+  return done({
+    ok: true,
+    message: gotToast ? '已设置成功（App 弹了提示）' : '已填入并点了设置',
+    steps,
+    actual,
+    gotToast,
+  });
 }

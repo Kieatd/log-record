@@ -711,10 +711,16 @@ async function fillDebugUrl() {
       fillForm.buttonText,
       `${window.screen.width}x${window.screen.height}`,
       fillForm.force,
+      fillForm.packageName || undefined,
     );
     for (const step of res.steps || []) pushLog(`  ${step}`, 'info');
     const cost = res.ms ? `（${(res.ms / 1000).toFixed(1)} 秒${res.cached ? '，走缓存' : ''}）` : '';
     pushLog(res.message + cost, res.ok ? 'ok' : 'err');
+    // 点完有没有弹提示，是判断「按钮到底有没有被响应」最直接的证据
+    if (res.ok) {
+      if (res.gotToast) message.success(i18n.t('设置成功（App 弹了提示）'));
+      else message.warning(i18n.t('没看到 App 的提示，按钮可能没被响应'));
+    }
     if (!res.ok) {
       message.error(res.message);
       return;

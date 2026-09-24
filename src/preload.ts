@@ -126,6 +126,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     buttonText?: string,
     screenKey?: string,
     force?: boolean,
+    packageName?: string,
   ) =>
     ipcRenderer.invoke('uiauto:fillDebugUrl', {
       ip,
@@ -133,6 +134,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       buttonText,
       screenKey,
       force,
+      packageName,
     }),
   appRestart: (packageName: string, serial?: string) =>
     ipcRenderer.invoke('app:restart', { packageName, serial }),

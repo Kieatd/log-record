@@ -455,6 +455,7 @@ const createWindow = () => {
         buttonText?: string;
         screenKey?: string;
         force?: boolean;
+        packageName?: string;
       },
     ) => {
       const info = currentAdb();
