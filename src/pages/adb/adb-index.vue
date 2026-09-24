@@ -668,6 +668,8 @@ const fillForm = reactive({
   buttonText: '设置',
   /** 填完要重启哪个 App */
   packageName: '',
+  /** IP 没变时也重填 */
+  force: false,
   ...(() => {
     try {
       return JSON.parse(localStorage.getItem(FILL_KEY) || '{}');
@@ -707,9 +709,12 @@ async function fillDebugUrl() {
       host,
       currentSerial.value,
       fillForm.buttonText,
+      `${window.screen.width}x${window.screen.height}`,
+      fillForm.force,
     );
     for (const step of res.steps || []) pushLog(`  ${step}`, 'info');
-    pushLog(res.message, res.ok ? 'ok' : 'err');
+    const cost = res.ms ? `（${(res.ms / 1000).toFixed(1)} 秒${res.cached ? '，走缓存' : ''}）` : '';
+    pushLog(res.message + cost, res.ok ? 'ok' : 'err');
     if (!res.ok) {
       message.error(res.message);
       return;
@@ -1702,6 +1707,13 @@ function deviceSubtitle(d: AdbDevice) {
             :options="pkgOptions"
             :loading="pkgLoading"
           />
+        </div>
+        <div class="mk-row">
+          <a-tooltip :title="$t('默认情况下，IP 没变就直接跳过填写（只重启 App），这样最快')">
+            <a-checkbox v-model:checked="fillForm.force">
+              {{ $t('IP 没变时也重填') }}
+            </a-checkbox>
+          </a-tooltip>
         </div>
         <div class="mk-tip">
           {{ $t('用法：先在手机上把 App 的调试页打开（就是填调试Url那个页面），再点磁贴左半边。它会自动找到输入框、清空、填上本机 IP、点按钮，最后重启 App') }}

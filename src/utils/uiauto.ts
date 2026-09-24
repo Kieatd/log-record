@@ -140,6 +140,77 @@ export interface FillResult {
   steps: string[];
   /** 填完之后输入框里的实际内容 */
   actual: string;
+  /** 耗时（毫秒），界面上显示出来 */
+  ms: number;
+  /** 这次走的是快路径（用了缓存坐标，没 dump） */
+  cached: boolean;
+}
+
+/**
+ * 坐标缓存：同一个界面反复填的时候，没必要每次都 dump（每次 1~2 秒）。
+ * key 用 序列号:包名:屏幕尺寸，屏幕尺寸变了（转屏/换设备）就重新 dump。
+ */
+const coordCache = new Map<
+  string,
+  { input: [number, number]; button: [number, number] }
+>();
+
+/** 每个设备上次成功填过的 IP，用来跳过重复填写 */
+const lastFilledIp = new Map<string, string>();
+
+export function clearCoordCache(): void {
+  coordCache.clear();
+}
+
+/** 数字和点号的键码，用来把 IPv4 直接按键打进去 */
+const DIGIT_KEYCODE: Record<string, number> = {
+  '0': 7, '1': 8, '2': 9, '3': 10, '4': 11,
+  '5': 12, '6': 13, '7': 14, '8': 15, '9': 16,
+  '.': 56,
+};
+
+/** IPv4 地址就返回它的键码序列，否则 null（用 input text 兜底） */
+export function ipToKeycodes(ip: string): number[] | null {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip.trim())) return null;
+  const codes: number[] = [];
+  for (const ch of ip.trim()) {
+    const k = DIGIT_KEYCODE[ch];
+    if (k === undefined) return null;
+    codes.push(k);
+  }
+  return codes;
+}
+
+/**
+ * 一次 shell 里把点击/清空/输入做完。
+ *
+ * 关键点：每启动一个 input 进程在 Android 上要约 0.4 秒，
+ * 所以能合并就合并 —— 退格和输入合成同一条 input keyevent
+ * （keyevent 支持一次传多个键码；40 次退格分开写要 16 秒，合并后 0.7 秒）。
+ */
+function buildFillCommand(
+  input: [number, number],
+  button: [number, number] | null,
+  ip: string,
+  /** 要按几次退格 */
+  backspaces: number,
+): string {
+  const keycodes: number[] = [
+    123, // 移到行尾
+    ...Array(backspaces).fill(67), // 退格
+  ];
+  const digitCodes = ipToKeycodes(ip);
+  if (digitCodes) {
+    // IPv4：直接用键码打，省掉一次 input text
+    keycodes.push(...digitCodes);
+  }
+  const parts = [
+    `input tap ${input[0]} ${input[1]}`,
+    `input keyevent ${keycodes.join(' ')}`,
+  ];
+  if (!digitCodes) parts.push(`input text ${ip}`);
+  if (button) parts.push(`input tap ${button[0]} ${button[1]}`);
+  return parts.join('; ');
 }
 
 /**
@@ -153,83 +224,130 @@ export async function fillDebugUrl(
     serial?: string;
     /** 按钮上的文字，默认「设置」 */
     buttonText?: string;
+    /** 屏幕尺寸，参与缓存 key */
+    screenKey?: string;
+    /** 强制重填（哪怕 IP 没变） */
+    force?: boolean;
   },
 ): Promise<FillResult> {
+  const started = Date.now();
   const steps: string[] = [];
   const base = options.serial ? ['-s', options.serial] : [];
   const buttonText = options.buttonText || '设置';
+  const cacheKey = `${options.serial || ''}:${options.screenKey || ''}:${buttonText}`;
+  const cached = coordCache.get(cacheKey);
+  const lastIp = lastFilledIp.get(options.serial || '');
+
+  // 最常见的情况：IP 根本没变（网络没换）。那就没必要再点一遍输入框、清空、重填，
+  // 直接跳过 —— 只有电脑 IP 变了才真的需要填。
+  if (lastIp === options.ip.trim() && !options.force) {
+    steps.push(`上次已经填过 ${options.ip}，跳过填写`);
+    return {
+      ok: true,
+      message: '地址没变，已跳过填写',
+      steps,
+      actual: options.ip,
+      ms: Date.now() - started,
+      cached: true,
+    };
+  }
+  const done = (r: Omit<FillResult, 'ms' | 'cached'>): FillResult => ({
+    ...r,
+    ms: Date.now() - started,
+    cached: !!cached,
+  });
+
+  // ---- 快路径：坐标有缓存，一条 shell 命令全做完 ----
+  if (cached) {
+    await runAdb(
+      file,
+      [
+        ...base,
+        'shell',
+        `input keyevent 224; ${buildFillCommand(cached.input, cached.button, options.ip, 24)}`,
+      ],
+      { timeout: 30000 },
+    );
+    steps.push('用缓存坐标直接完成（点击/清空/输入/点按钮）');
+    lastFilledIp.set(options.serial || '', options.ip.trim());
+    return done({ ok: true, message: '已填入并点了设置（快）', steps, actual: options.ip });
+  }
+
+  // ---- 慢路径（第一次）：先唤醒屏幕，再 dump 找位置 ----
+  // 息屏时 uiautomator 拿到的是空结构，会误报「没找到输入框」，
+  // 所以先点亮，并且把屏幕状态单独报出来（息屏/锁屏是最常见的失败原因）
+  await runAdb(file, [...base, 'shell', 'input', 'keyevent', '224'], { timeout: 10000 });
+  const wake = await runAdb(file, [...base, 'shell', 'dumpsys', 'power'], { timeout: 15000 });
+  const awake = /mWakefulness=Awake/.test(wake.stdout + wake.stderr);
+  if (!awake) {
+    return done({
+      ok: false,
+      message: '手机屏幕是黑的（息屏或锁屏），先按电源键点亮并解锁，再点这里',
+      steps,
+      actual: '',
+    });
+  }
 
   const first = await dumpUi(file, options.serial);
   if (!first.ok) {
-    return { ok: false, message: first.message || '读不到界面', steps, actual: '' };
+    return done({ ok: false, message: first.message || '读不到界面', steps, actual: '' });
   }
   const input = findInput(first.nodes);
   if (!input) {
-    return {
+    return done({
       ok: false,
-      message: '当前界面上没找到输入框，先把 App 的调试页打开',
+      message: '当前界面上没找到输入框 —— 确认手机上打开的是 App 的调试页（填调试Url那个页面）',
       steps,
       actual: '',
-    };
+    });
   }
-  steps.push(`找到输入框，位置 ${centerOf(input).join(',')}`);
+  const btn = findButtonNear(first.nodes, input, buttonText);
+  if (!btn) {
+    return done({
+      ok: false,
+      message: `当前界面上没找到「${buttonText}」按钮，先把 App 的调试页打开`,
+      steps,
+      actual: '',
+    });
+  }
+  const inputCenter = centerOf(input);
+  const btnCenter = centerOf(btn);
+  steps.push(`找到输入框 ${inputCenter.join(',')}、按钮「${buttonText}」${btnCenter.join(',')}`);
 
-  // 点进输入框
-  const [ix, iy] = centerOf(input);
-  await runAdb(file, [...base, 'shell', 'input', 'tap', String(ix), String(iy)], {
-    timeout: 15000,
-  });
-  steps.push('已点进输入框');
+  // 退格次数按当前内容长度来，不用固定 40 次
+  const backspaces = Math.max(16, (input.text || '').length + 6);
 
-  // 清空：移到末尾再连按退格（没有更干净的办法，input 只能追加）
+  // 先只做「点击 + 清空 + 输入」，然后回读校验，通过了再点按钮
   await runAdb(
     file,
-    [
-      ...base,
-      'shell',
-      'input keyevent 123; for i in $(seq 1 40); do input keyevent 67; done',
-    ],
+    [...base, 'shell', buildFillCommand(inputCenter, null, options.ip, backspaces)],
     { timeout: 30000 },
   );
-  steps.push('已清空原内容');
+  steps.push(`已点击输入框、清空（${backspaces} 次退格）、填入 ${options.ip}`);
 
-  // 填新地址
-  await runAdb(
-    file,
-    [...base, 'shell', 'input', 'text', options.ip],
-    { timeout: 15000 },
-  );
-  steps.push(`已填入 ${options.ip}`);
-
-  // 回读校验：填错了就没必要再点按钮了
   const second = await dumpUi(file, options.serial);
   const after = second.ok ? findInput(second.nodes) : null;
   const actual = after?.text || '';
   if (!actual.includes(options.ip)) {
-    return {
+    return done({
       ok: false,
       message: `填进去的内容不对（实际是「${actual}」），没继续点按钮`,
       steps,
       actual,
-    };
+    });
   }
   steps.push('回读校验通过');
 
-  // 点按钮
-  const btn = findButtonNear(second.nodes, after, buttonText);
-  if (!btn) {
-    return {
-      ok: false,
-      message: `没找到「${buttonText}」按钮，IP 已经填好了，手动点一下即可`,
-      steps,
-      actual,
-    };
-  }
-  const [bx, by] = centerOf(btn);
-  await runAdb(file, [...base, 'shell', 'input', 'tap', String(bx), String(by)], {
-    timeout: 15000,
-  });
-  steps.push(`已点「${buttonText}」（位置 ${bx},${by}）`);
+  // 校验通过才点按钮，顺便把坐标缓存下来，下次走快路径
+  await runAdb(
+    file,
+    [...base, 'shell', 'input', 'tap', String(btnCenter[0]), String(btnCenter[1])],
+    { timeout: 15000 },
+  );
+  steps.push(`已点「${buttonText}」（位置 ${btnCenter.join(',')}）`);
+  coordCache.set(cacheKey, { input: inputCenter, button: btnCenter });
+  lastFilledIp.set(options.serial || '', options.ip.trim());
+  steps.push('坐标已缓存，下次会快很多');
 
-  return { ok: true, message: '已填入并点了设置', steps, actual };
+  return done({ ok: true, message: '已填入并点了设置', steps, actual });
 }

@@ -449,7 +449,13 @@ const createWindow = () => {
     'uiauto:fillDebugUrl',
     async (
       _,
-      payload: { ip: string; serial?: string; buttonText?: string },
+      payload: {
+        ip: string;
+        serial?: string;
+        buttonText?: string;
+        screenKey?: string;
+        force?: boolean;
+      },
     ) => {
       const info = currentAdb();
       if (!info.found) return { ok: false, message: info.error || '没找到 adb', steps: [] };

@@ -120,8 +120,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('scrcpy:closed', (_e, v) => callback(v)),
 
   adbInstallTimes: (serial?: string) => ipcRenderer.invoke('adb:installTimes', serial),
-  uiautoFillDebugUrl: (ip: string, serial?: string, buttonText?: string) =>
-    ipcRenderer.invoke('uiauto:fillDebugUrl', { ip, serial, buttonText }),
+  uiautoFillDebugUrl: (
+    ip: string,
+    serial?: string,
+    buttonText?: string,
+    screenKey?: string,
+    force?: boolean,
+  ) =>
+    ipcRenderer.invoke('uiauto:fillDebugUrl', {
+      ip,
+      serial,
+      buttonText,
+      screenKey,
+      force,
+    }),
   appRestart: (packageName: string, serial?: string) =>
     ipcRenderer.invoke('app:restart', { packageName, serial }),
   adbAppLabels: (
