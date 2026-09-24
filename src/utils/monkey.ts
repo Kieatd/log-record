@@ -158,27 +158,58 @@ export async function currentTopPackage(
   return m ? m[1] : '';
 }
 
-/** 开/关沉浸模式（把状态栏和导航栏藏起来，减少 monkey 点到导航栏跑出去的几率） */
-export async function setImmersive(
+/** 读当前 policy_control（原值要留着，恢复时用） */
+export async function getPolicyControl(
   file: string,
-  on: boolean,
+  serial?: string,
+): Promise<string> {
+  const base = serial ? ['-s', serial] : [];
+  const res = await runAdb(
+    file,
+    [...base, 'shell', 'settings', 'get', 'global', 'policy_control'],
+    { timeout: 15000 },
+  );
+  return (res.stdout + res.stderr).trim();
+}
+
+async function putPolicyControl(
+  file: string,
+  value: string,
   serial?: string,
 ): Promise<void> {
   const base = serial ? ['-s', serial] : [];
   await runAdb(
     file,
-    [
-      ...base,
-      'shell',
-      'settings',
-      'put',
-      'global',
-      'policy_control',
-      on ? 'immersive.full=*' : 'null',
-    ],
+    [...base, 'shell', 'settings', 'put', 'global', 'policy_control', value],
     { timeout: 15000 },
   );
 }
+
+/**
+ * 开沉浸模式（藏起状态栏和导航栏，少给 monkey 点到导航栏的机会）。
+ *
+ * 原来的值必须先记下来 —— 手机上本来可能就设了 policy_control
+ * （比如三星默认是 immersive.full=*,-com.sec.android.app.launcher），
+ * 恢复时写死 null 会把人家原来的设置冲掉。
+ */
+export async function setImmersive(
+  file: string,
+  on: boolean,
+  serial?: string,
+): Promise<void> {
+  if (on) {
+    const original = await getPolicyControl(file, serial);
+    originalPolicy.set(serial || '', original === 'null' ? 'null' : original);
+    await putPolicyControl(file, 'immersive.full=*', serial);
+    return;
+  }
+  const original = originalPolicy.get(serial || '');
+  await putPolicyControl(file, original || 'null', serial);
+  originalPolicy.delete(serial || '');
+}
+
+/** 每个设备开沉浸模式之前的 policy_control 原值 */
+const originalPolicy = new Map<string, string>();
 
 export function startMonkey(
   file: string,
