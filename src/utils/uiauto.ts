@@ -99,6 +99,13 @@ export function findText(nodes: UiNode[], text: string): UiNode | null {
   return hits.slice().sort((a, b) => area(a) - area(b))[0];
 }
 
+/** 往下滑一屏（滚动页面） */
+async function swipeUp(file: string, base: string[]): Promise<void> {
+  await runAdb(file, [...base, 'shell', 'input', 'swipe', '540', '1600', '540', '700', '300'], {
+    timeout: 15000,
+  });
+}
+
 /**
  * 自动走到 App 的调试页。
  *
@@ -114,11 +121,13 @@ export async function gotoDebugPage(
     packageName?: string;
     steps: string[];
     waitMs?: number;
+    /** 屏幕尺寸，参与缓存 key */
+    screenKey?: string;
   },
 ): Promise<{ ok: boolean; message: string; steps: string[] }> {
   const log: string[] = [];
   const base = options.serial ? ['-s', options.serial] : [];
-  const waitMs = options.waitMs ?? 1500;
+  const waitMs = options.waitMs ?? 1000;
 
   const alreadyThere = async () => {
     const d = await dumpUi(file, options.serial);
@@ -130,6 +139,8 @@ export async function gotoDebugPage(
     return { ok: true, message: '已在调试页', steps: log };
   }
 
+
+
   const walk = async () => {
     for (const step of options.steps) {
       const d = await dumpUi(file, options.serial);
@@ -138,20 +149,18 @@ export async function gotoDebugPage(
         return false;
       }
       let hit = findText(d.nodes, step);
+      let scrolls = 0;
       if (!hit) {
         // 可能在屏幕外 —— 往下滚一屏再找（实测「release button 开关」
         // 就在 demo 导航页的下半部分，不滚看不到）
         for (let i = 0; i < 5 && !hit; i++) {
-          await runAdb(
-            file,
-            [...base, 'shell', 'input', 'swipe', '540', '1600', '540', '700', '300'],
-            { timeout: 15000 },
-          );
-          await new Promise((r) => setTimeout(r, 600));
+          await swipeUp(file, base);
+          await new Promise((r) => setTimeout(r, 300));
+          scrolls += 1;
           const again = await dumpUi(file, options.serial);
           if (again.ok) hit = findText(again.nodes, step);
         }
-        if (hit) log.push(`「${step}」在屏幕外，滚动后才找到`);
+        if (hit) log.push(`「${step}」在屏幕外，滚了 ${scrolls} 屏才找到`);
       }
       if (!hit) {
         log.push(`没看到「${step}」，跳过（可能已经在后面某一页）`);
@@ -176,6 +185,8 @@ export async function gotoDebugPage(
     });
     await launchApp(file, options.packageName, { serial: options.serial });
     await new Promise((r) => setTimeout(r, 5000));
+    for (let i = 0; i < 5; i++) await swipeDown(file, base);
+    await new Promise((r) => setTimeout(r, 400));
     if (await walk()) return { ok: true, message: '重启后走到了调试页', steps: log };
   }
   return { ok: false, message: '没能自动走到调试页，请手动打开后再试', steps: log };
@@ -423,6 +434,7 @@ export async function fillDebugUrl(
       serial: options.serial,
       packageName: options.packageName,
       steps: options.navSteps,
+      screenKey: options.screenKey,
     });
     for (const l of nav.steps) steps.push(`[导航] ${l}`);
     if (!nav.ok) return done({ ok: false, message: nav.message, steps, actual: '' });
