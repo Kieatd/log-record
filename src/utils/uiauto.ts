@@ -10,11 +10,22 @@ import { runAdb } from './adb';
 
 export interface UiNode {
   text: string;
+  /**
+   * content-desc（无障碍标签）。
+   * webview 里的按钮，文字往往在 content-desc 里而不是 text ——
+   * 调试页那个「设置」按钮就是这样，只读 text 会找不到。
+   */
+  desc: string;
   cls: string;
   /** [left, top, right, bottom] */
   bounds: [number, number, number, number];
   clickable: boolean;
   focused: boolean;
+}
+
+/** 节点面积，用来挑「最具体」的那个 */
+function area(n: UiNode): number {
+  return (n.bounds[2] - n.bounds[0]) * (n.bounds[3] - n.bounds[1]);
 }
 
 /** 解析 uiautomator dump 出来的 XML */
@@ -32,6 +43,7 @@ export function parseUiDump(xml: string): UiNode[] {
     if (!b) continue;
     nodes.push({
       text: get('text'),
+      desc: get('content-desc'),
       cls: get('class'),
       bounds: [
         parseInt(b[1], 10),
@@ -97,17 +109,28 @@ export function findButtonNear(
   input: UiNode | null,
   text: string,
 ): UiNode | null {
+  // text 和 content-desc 都算：webview 里的按钮文字常在 content-desc
   const wanted = nodes.filter(
-    (n) => n.text.trim() === text && (n.clickable || /Button/i.test(n.cls)),
+    (n) => n.text.trim() === text || n.desc.trim() === text,
   );
   if (!wanted.length) return null;
-  if (!input) return wanted[0];
-  const inputMid = (input.bounds[1] + input.bounds[3]) / 2;
-  // 同一行：垂直中心差在输入框高度以内
-  const sameRow = wanted.filter(
-    (n) => Math.abs((n.bounds[1] + n.bounds[3]) / 2 - inputMid) < (input.bounds[3] - input.bounds[1]) * 1.5,
-  );
-  return sameRow[0] || wanted[0];
+
+  // 同一行的优先（按钮一般就在输入框右边）
+  let candidates = wanted;
+  if (input) {
+    const inputMid = (input.bounds[1] + input.bounds[3]) / 2;
+    const sameRow = wanted.filter(
+      (n) =>
+        Math.abs((n.bounds[1] + n.bounds[3]) / 2 - inputMid) <
+        (input.bounds[3] - input.bounds[1]) * 1.5,
+    );
+    if (sameRow.length) candidates = sameRow;
+  }
+
+  // 取最小的那个：webview 里同一行上，可点击的容器会包住整行
+  //（bounds 覆盖整个输入框），点它的中心会点到输入框。
+  // 真正按钮的文字节点小得多，位置也对。
+  return candidates.slice().sort((a, b) => area(a) - area(b))[0];
 }
 
 export interface FillResult {
