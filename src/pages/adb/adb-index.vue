@@ -12,32 +12,6 @@ import {
 import { Modal, message } from 'ant-design-vue';
 import { useI18n } from 'vue-i18n';
 import ScrcpyView from './scrcpy-view.vue';
-import {
-  ApiOutlined,
-  AppstoreAddOutlined,
-  BugOutlined,
-  BulbOutlined,
-  CameraOutlined,
-  CheckCircleFilled,
-  DeleteOutlined,
-  EditOutlined,
-  FolderOpenOutlined,
-  CloseCircleFilled,
-  ExclamationCircleFilled,
-  LinkOutlined,
-  LoadingOutlined,
-  MobileOutlined,
-  PictureOutlined,
-  PlayCircleOutlined,
-  ReloadOutlined,
-  SaveOutlined,
-  SearchOutlined,
-  SettingOutlined,
-  ThunderboltOutlined,
-  UploadOutlined,
-  UsbOutlined,
-  WifiOutlined,
-} from '@ant-design/icons-vue';
 
 const i18n = useI18n();
 const api = (window as any).electronAPI;
@@ -960,19 +934,6 @@ async function pickAndPush() {
   if (!res.canceled) await doPush(res.paths);
 }
 
-/** 在手机上打开接收目录（省得在手机上自己翻到那个文件夹） */
-async function openFolderOnPhone() {
-  if (!ready.value) {
-    message.warning(i18n.t('先插上线，选中一台设备'));
-    return;
-  }
-  const res = await api.adbOpenFolder(pushDest.value, currentSerial.value);
-  pushLog(res.message, res.ok ? 'ok' : 'err');
-  (res.steps || []).forEach((x) => pushLog(`  ${x}`, 'info'));
-  if (res.ok) message.success(res.message);
-  else message.error(res.message);
-}
-
 async function cancelPush() {
   if (!pushTaskId.value) return;
   await api.pushCancel(pushTaskId.value);
@@ -1710,32 +1671,11 @@ function deviceSubtitle(d: AdbDevice) {
           <div class="tile-desc">
             {{ pushDragging ? $t('松手就开始传') : $t('把文件拖到这里，或点击选择') }}
           </div>
-          <!-- 点这行就在手机上打开这个文件夹（包 guard：别冒泡到磁贴去弹选文件） -->
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('在手机上打开这个文件夹')">
-              <div class="tile-desc tile-open-folder" @click="openFolderOnPhone">
-                → {{ pushDest }}
-              </div>
-            </a-tooltip>
-          </span>
         </template>
         </div>
 
-        <!-- 右：配置（两个入口一直显示） -->
+        <!-- 右：配置 -->
         <div class="tile-side">
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('在手机上打开这个文件夹')">
-              <div
-                class="tile-side-entry"
-                :class="{ 'tile-side-entry-off': !ready }"
-                @click="openFolderOnPhone"
-              >
-                <FolderOpenOutlined class="tile-side-entry-icon" />
-                <div class="tile-side-entry-label">{{ $t('打开手机目录') }}</div>
-              </div>
-            </a-tooltip>
-          </span>
-          <div class="tile-side-divider"></div>
           <span class="tile-guard" @click.stop @mousedown.stop>
             <a-tooltip :title="$t('改接收目录')">
               <div class="tile-side-entry" @click="pushDestOpen = true">
