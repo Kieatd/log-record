@@ -137,7 +137,7 @@ of switching to a terminal.
 | **Wireless debugging** | Enable once while plugged in, then unplug and connect by IP |
 | **Mirror & control** | A permanent panel on the right (start it with the button inside) shows the live phone screen, and you can click (tap), drag (swipe), scroll, and send keys to it. When the screen is off it says so and offers a wake button |
 | **Monkey stress test** | Click the left half to start random tapping/swiping inside a chosen app (stability testing); the right half opens the settings: target app (searchable list with app names), event count, throttle, seed (kept so you can reproduce), ignore crashes / ANRs. `CRASH` lines are highlighted in red |
-| **Send files to phone** | Drop files on the tile (or click to pick, multi-select supported) — progress bar and cancel included. Defaults to the `Download` folder; click the folder icon on the tile to change it |
+| **Send files to phone** | Drop files on the tile (or click to pick, multi-select supported) — progress bar and cancel included. Defaults to the `Download` folder; the folder icon on the tile changes it. **Clicking the `→ /sdcard/Download/` line opens that folder on the phone**, so you don't have to navigate there by hand |
 | **Fill debug URL** | When the PC IP changes you used to open the app's debug page on the phone, retype the address, tap the button and restart the app. Now one click does it: via adb uiautomator it finds the input, clears it, types this PC IP, reads it back to verify, taps the button and restarts the app. No app changes, no root |
 | **Custom command** | Run adb shell commands with the output in the panel below |
 

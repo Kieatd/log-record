@@ -512,6 +512,73 @@ export async function uninstallApp(
   return { ...judgeUninstall(raw), raw };
 }
 
+/**
+ * 在手机上打开一个文件夹（用手机自己的文件管理器）。
+ *
+ * 实测（三星 + Android 9）：
+ *  - 必须带【尾斜杠】：file:///sdcard/Download/ 能直接进到目录里，
+ *    file:///sdcard/Download（不带斜杠）只停在根目录
+ *  - 不能带 -t resource/folder（会 unable to resolve）
+ *  - 三星「我的文件」用显式组件才稳：com.sec.android.app.myfiles/.external.ui.MainActivity
+ *  - 系统的 DocumentsUI 一遇到 document URI 就崩（这台机器上），所以只作兜底，
+ *    而且只用不带 document uri 的写法
+ */
+export async function openFolderOnPhone(
+  file: string,
+  folder: string,
+  serial?: string,
+): Promise<{ ok: boolean; message: string }> {
+  const base = serial ? ['-s', serial] : [];
+  // 路径一定要以 / 结尾，否则只会停在根目录
+  const dir = folder.endsWith('/') ? folder : `${folder}/`;
+  const uri = `file://${dir}`;
+
+  // ① 三星「我的文件」
+  const pkgs = await runAdb(file, [...base, 'shell', 'pm', 'list', 'packages'], {
+    timeout: 20000,
+  });
+  if (pkgs.stdout.includes('com.sec.android.app.myfiles')) {
+    const r = await runAdb(
+      file,
+      [
+        ...base,
+        'shell',
+        'am',
+        'start',
+        '-n',
+        'com.sec.android.app.myfiles/.external.ui.MainActivity',
+        '-d',
+        uri,
+      ],
+      { timeout: 20000 },
+    );
+    const out = (r.stdout + r.stderr).trim();
+    if (r.code === 0 && !/Error/i.test(out)) {
+      return { ok: true, message: `已在手机上打开 ${dir}` };
+    }
+  }
+
+  // ② 通用：DocumentsUI 的目录类型（不带 document uri，带 document uri 会崩）
+  const r2 = await runAdb(
+    file,
+    [...base, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', uri, '-t', 'vnd.android.document/directory'],
+    { timeout: 20000 },
+  );
+  if (r2.code === 0) return { ok: true, message: `已在手机上打开 ${dir}` };
+
+  // ③ 兜底：不带 type，系统会弹「打开方式」让你选
+  const r3 = await runAdb(
+    file,
+    [...base, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', uri],
+    { timeout: 20000 },
+  );
+  const out3 = (r3.stdout + r3.stderr).trim();
+  return {
+    ok: r3.code === 0,
+    message: r3.code === 0 ? '已让手机打开文件管理器' : out3 || '打开失败',
+  };
+}
+
 /** 重启一个已装应用：先强停，再按 LAUNCHER 拉起来 */
 export async function restartApp(
   file: string,

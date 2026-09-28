@@ -85,6 +85,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pushFiles: (paths: string[], dest?: string, serial?: string, taskId?: string) =>
     ipcRenderer.invoke('push:files', { paths, dest, serial, taskId }),
   pushCancel: (taskId: string) => ipcRenderer.invoke('push:cancel', taskId),
+  adbOpenFolder: (folder: string, serial?: string) =>
+    ipcRenderer.invoke('adb:openFolder', { folder, serial }),
   onPushOutput: (callback: any) =>
     ipcRenderer.on('push:output', (_e, v) => callback(v)),
   onPushProgress: (callback: any) =>

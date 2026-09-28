@@ -44,6 +44,7 @@ import {
   listDevices,
   listPackages,
   loadCustomAdbPath,
+  openFolderOnPhone,
   readInstallTimes,
   restartApp,
   readInstalledAppLabels,
@@ -122,6 +123,7 @@ const createWindow = () => {
   ipcMain.handle('checkIsUpdate', () =>
     checkForUpgrade(author.name, name, version),
   );
+
 
 
 
@@ -430,6 +432,16 @@ const createWindow = () => {
         return { ok: false, message: info.error || '没找到 adb', packages: [] };
       }
       return listPackages(info.file, payload);
+    },
+  );
+
+  // 在手机上打开一个文件夹（用手机自己的文件管理器）
+  ipcMain.handle(
+    'adb:openFolder',
+    async (_, payload: { folder: string; serial?: string }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return openFolderOnPhone(info.file, payload.folder, payload.serial);
     },
   );
 
