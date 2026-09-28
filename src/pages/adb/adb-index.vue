@@ -11,6 +11,31 @@ import {
 } from 'vue';
 import { Modal, message } from 'ant-design-vue';
 import { useI18n } from 'vue-i18n';
+import {
+  ApiOutlined,
+  AppstoreAddOutlined,
+  BugOutlined,
+  BulbOutlined,
+  CameraOutlined,
+  CheckCircleFilled,
+  DeleteOutlined,
+  EditOutlined,
+  CloseCircleFilled,
+  ExclamationCircleFilled,
+  LinkOutlined,
+  LoadingOutlined,
+  MobileOutlined,
+  PictureOutlined,
+  PlayCircleOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  SearchOutlined,
+  SettingOutlined,
+  ThunderboltOutlined,
+  UploadOutlined,
+  UsbOutlined,
+  WifiOutlined,
+} from '@ant-design/icons-vue';
 import ScrcpyView from './scrcpy-view.vue';
 
 const i18n = useI18n();
