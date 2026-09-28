@@ -139,6 +139,38 @@ export async function killMonkeyOnDevice(
   return !alive;
 }
 
+/**
+ * 当前焦点窗口（形如 StatusBar / uni.UNIeebddc7/.MainActivity）。
+ *
+ * 为什么要看这个：通知栏拉下来的时候，顶层 Activity 还是原来的 App，
+ * 只有焦点窗口变成 StatusBar —— 光看 Activity 发现不了。
+ * 设备侧 grep -m1，实测 0.13 秒。
+ */
+export async function currentFocusWindow(
+  file: string,
+  serial?: string,
+): Promise<string> {
+  const base = serial ? ['-s', serial] : [];
+  const res = await runAdb(
+    file,
+    [...base, 'shell', 'dumpsys window windows | grep -m1 mCurrentFocus'],
+    { timeout: 10000 },
+  );
+  const m = (res.stdout + res.stderr).match(/mCurrentFocus=Window\{[^}]*\s([^\s}]+)\}/);
+  return m ? m[1] : '';
+}
+
+/** 收起通知栏 */
+export async function collapseNotificationShade(
+  file: string,
+  serial?: string,
+): Promise<void> {
+  const base = serial ? ['-s', serial] : [];
+  await runAdb(file, [...base, 'shell', 'cmd', 'statusbar', 'collapse'], {
+    timeout: 10000,
+  });
+}
+
 /** 当前顶层的包名，看门狗要用 */
 export async function currentTopPackage(
   file: string,
@@ -218,6 +250,17 @@ export function startMonkey(
   // 光靠关事件类别拦不住，所以直接盯着顶层应用，跑出去就停。
   const watchdog = setInterval(async () => {
     if (job !== current || current.canceled) return;
+
+    // monkey 的随机滑动有时会从屏幕顶部往下滑，把通知栏拉下来。
+    // 这时候顶层 Activity 还是原来的 App（只有焦点窗口变成 StatusBar），
+    // 所以单独看一眼焦点窗口，是通知栏就自动收起来，继续跑。
+    const focus = await currentFocusWindow(file, options.serial);
+    if (/StatusBar|NotificationShade/i.test(focus)) {
+      await collapseNotificationShade(file, options.serial);
+      options.onOutput?.('通知栏被拉下来了，已自动收起');
+      return;
+    }
+
     const top = await currentTopPackage(file, options.serial);
     if (!top) return;
     if (top !== options.packageName) {
@@ -227,7 +270,7 @@ export function startMonkey(
       await stopMonkey(file, options.serial);
       options.onEscaped?.(top);
     }
-  }, 2000);
+  }, 1500);
 
   return { ok: true, message: 'monkey 已开始' };
 }
