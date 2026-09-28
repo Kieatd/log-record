@@ -17,6 +17,7 @@
  * 这个并不亏。
  */
 import { runAdb } from './adb';
+import { dumpUi } from './uiauto';
 
 export interface StressOptions {
   serial?: string;
@@ -50,16 +51,29 @@ export function isStressRunning(): boolean {
 }
 
 export function parseWmSize(out: string): { w: number; h: number } | null {
-  // 形如：Physical size: 1080x2220   或   Override size: 1080x2220
-  const m = out.match(/(?:Override|Physical) size:\s*(\d+)x(\d+)/);
-  return m ? { w: parseInt(m[1], 10), h: parseInt(m[2], 10) } : null;
+  // wm size 会同时打印两行：
+  //   Physical size: 1440x2960   ← 物理分辨率，不是触摸坐标用的
+  //   Override size: 1080x2220   ← 这个才是
+  // 必须先找 Override，否则会拿到物理分辨率（1440x2960），
+  // 那算出来的可用区域会比真实屏幕高出一大截 —— 触摸坐标就跑到导航栏上了。
+  const override = out.match(/Override size:\s*(\d+)x(\d+)/);
+  if (override) {
+    return { w: parseInt(override[1], 10), h: parseInt(override[2], 10) };
+  }
+  const physical = out.match(/Physical size:\s*(\d+)x(\d+)/);
+  return physical
+    ? { w: parseInt(physical[1], 10), h: parseInt(physical[2], 10) }
+    : null;
 }
 
 function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-/** 生成一个完全落在 [top, bottom] 区域内的手势命令 */
+/** 边界再往里让几个像素：可用区域算出来的边界正好压在导航栏/状态栏的第一行上 */
+const EDGE_MARGIN = 8;
+
+/** 生成一个完全落在可用区域内的手势命令 */
 export function buildGesture(args: {
   width: number;
   height: number;
@@ -67,8 +81,15 @@ export function buildGesture(args: {
   bottomInset: number;
   swipe: boolean;
 }): string {
-  const x0 = randInt(Math.round(args.width * 0.06), Math.round(args.width * 0.94));
-  const y0 = randInt(args.topInset, args.height - args.bottomInset);
+  // 注意是【开区间】：上界要减 1，不能让点正好落在导航栏的第一行
+  // （实测：滑动被夹回边界时会大量堆在边界那个点上，2000 次里有 106 次踩到导航栏）
+  const yMin = args.topInset + EDGE_MARGIN;
+  const yMax = args.height - args.bottomInset - EDGE_MARGIN - 1;
+  const xMin = Math.round(args.width * 0.06) + EDGE_MARGIN;
+  const xMax = Math.round(args.width * 0.94) - EDGE_MARGIN - 1;
+
+  const x0 = randInt(xMin, xMax);
+  const y0 = randInt(yMin, yMax);
   if (!args.swipe) return `input tap ${x0} ${y0}`;
 
   // 滑动：长度和方向随机，但【起点和终点都在区域内】，
@@ -77,11 +98,8 @@ export function buildGesture(args: {
   const maxDy = Math.round(args.height * 0.4);
   const dx = randInt(-maxDx, maxDx);
   const dy = randInt(-maxDy, maxDy);
-  const x1 = Math.min(Math.max(x0 + dx, Math.round(args.width * 0.04)), Math.round(args.width * 0.96));
-  const y1 = Math.min(
-    Math.max(y0 + dy, args.topInset),
-    args.height - args.bottomInset,
-  );
+  const x1 = Math.min(Math.max(x0 + dx, xMin), xMax);
+  const y1 = Math.min(Math.max(y0 + dy, yMin), yMax);
   const duration = randInt(150, 500);
   return `input swipe ${x0} ${y0} ${x1} ${y1} ${duration}`;
 }
@@ -96,6 +114,47 @@ async function topPackage(file: string, serial?: string): Promise<string> {
   );
   const m = (res.stdout + res.stderr).match(/u0\s+([\w.]+)\//);
   return m ? m[1] : '';
+}
+
+/**
+ * 量出 App 真正能绘制的区域。
+ *
+ * 不去猜「导航栏多高」：直接 dump 一次界面，取最大的那个节点
+ * （整个界面的根节点），它的 bounds 就是 App 能画的区域。
+ * 实测这台三星是 [0,0,1080,2076] —— 底部 144px 是导航栏，
+ * 用这个数当避让比估的准。
+ */
+export async function measureContentArea(
+  file: string,
+  options: { serial?: string; width: number; height: number },
+): Promise<{ top: number; bottom: number; source: string }> {
+  const fallback = { top: 130, bottom: 200, source: '估算值' };
+  try {
+    const d = await dumpUi(file, options.serial);
+    if (!d.ok || !d.nodes.length) return fallback;
+    // 面积最大的节点就是界面的根
+    const root = d.nodes
+      .slice()
+      .sort(
+        (a, b) =>
+          (b.bounds[2] - b.bounds[0]) * (b.bounds[3] - b.bounds[1]) -
+          (a.bounds[2] - a.bounds[0]) * (a.bounds[3] - a.bounds[1]),
+      )[0];
+    const [, top, , bottom] = root.bounds;
+    // 根节点的宽度得跟屏幕差不多，否则可能认错了节点
+    if (root.bounds[2] - root.bounds[0] < options.width * 0.8) return fallback;
+    const bottomInset = options.height - bottom;
+    if (bottomInset < 0 || bottomInset > options.height * 0.3) return fallback;
+    // 顶部：根节点可能从 0 开始（状态栏是覆盖式的），所以取个够大的值
+    const topInset = Math.max(top, Math.round(options.height * 0.06));
+    return {
+      top: topInset,
+      bottom: Math.max(bottomInset, 60),
+      source: '实测（App 可绘制区域 ' + JSON.stringify(root.bounds) + '）',
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -114,8 +173,13 @@ export async function startStress(
   if (!size) return { ok: false, message: '读不到屏幕尺寸' };
   if (!options.packageName) return { ok: false, message: '先选一个要操作的应用' };
 
-  const top = options.topInset ?? 130;
-  const bottom = options.bottomInset ?? 200;
+  const measured = await measureContentArea(file, {
+    serial: options.serial,
+    width: size.w,
+    height: size.h,
+  });
+  const top = options.topInset ?? measured.top;
+  const bottom = options.bottomInset ?? measured.bottom;
   if (size.h - top - bottom < 200) {
     return { ok: false, message: '避让之后可用区域太小了' };
   }
@@ -128,7 +192,9 @@ export async function startStress(
   const swipeRatio = options.swipeRatio ?? 0.35;
 
   options.onOutput?.(
-    `限定区域随机操作：共 ${total} 次，区域 y ${top}~${size.h - bottom}（避开状态栏 ${top}px、导航栏 ${bottom}px），滑动比例 ${Math.round(swipeRatio * 100)}%`,
+    `限定区域随机操作：共 ${total} 次，可操作范围 y ${top}~${size.h - bottom}` +
+      `（避开顶部 ${top}px、底部 ${bottom}px，${measured.source}），` +
+      `滑动比例 ${Math.round(swipeRatio * 100)}%`,
   );
   // 唤醒屏幕
   await runAdb(file, [...base, 'shell', 'input', 'keyevent', '224'], { timeout: 10000 });
