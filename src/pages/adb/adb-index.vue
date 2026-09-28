@@ -20,6 +20,7 @@ import {
   CheckCircleFilled,
   DeleteOutlined,
   EditOutlined,
+  FolderOpenOutlined,
   CloseCircleFilled,
   ExclamationCircleFilled,
   LinkOutlined,
@@ -219,6 +220,19 @@ async function loadDevices() {
   } finally {
     loadingDevices.value = false;
   }
+}
+
+/** 在手机上打开接收目录 */
+async function openFolderOnPhone() {
+  if (!ready.value) {
+    message.warning(i18n.t('先插上线，选中一台设备'));
+    return;
+  }
+  const res = await api.adbOpenFolder(pushDest.value, currentSerial.value);
+  pushLog(res.message, res.ok ? 'ok' : 'err');
+  (res.steps || []).forEach((x) => pushLog(`  ${x}`, 'info'));
+  if (res.ok) message.success(res.message);
+  else message.error(res.message);
 }
 
 async function selectDevice(serial: string) {
@@ -1699,8 +1713,21 @@ function deviceSubtitle(d: AdbDevice) {
         </template>
         </div>
 
-        <!-- 右：配置 -->
+        <!-- 右：配置（两个入口一直显示） -->
         <div class="tile-side">
+          <span class="tile-guard" @click.stop @mousedown.stop>
+            <a-tooltip :title="$t('在手机上打开这个文件夹')">
+              <div
+                class="tile-side-entry"
+                :class="{ 'tile-side-entry-off': !ready }"
+                @click="openFolderOnPhone"
+              >
+                <FolderOpenOutlined class="tile-side-entry-icon" />
+                <div class="tile-side-entry-label">{{ $t('打开接收目录') }}</div>
+              </div>
+            </a-tooltip>
+          </span>
+          <div class="tile-side-divider"></div>
           <span class="tile-guard" @click.stop @mousedown.stop>
             <a-tooltip :title="$t('改接收目录')">
               <div class="tile-side-entry" @click="pushDestOpen = true">

@@ -235,6 +235,7 @@ export default {
   '设置参数': 'Settings',
   '传文件到手机': 'Send files to phone',
   '改接收目录': 'Change destination folder',
+  '打开接收目录': 'Open receive folder',
   '显示系统应用': 'Show system apps',
   '默认只看用户装的 App': 'By default only user-installed apps are listed',
   '执行后清空': 'Clear after run',
