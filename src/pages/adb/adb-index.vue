@@ -968,6 +968,7 @@ async function openFolderOnPhone() {
   }
   const res = await api.adbOpenFolder(pushDest.value, currentSerial.value);
   pushLog(res.message, res.ok ? 'ok' : 'err');
+  (res.steps || []).forEach((x) => pushLog(`  ${x}`, 'info'));
   if (res.ok) message.success(res.message);
   else message.error(res.message);
 }

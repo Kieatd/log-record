@@ -1,11 +1,12 @@
 /**
  * adb 调用工具。
  *
- * 这里刻意不 import electron：所有跟主进程相关的东西（userData 路径、
+ * 这里刻意不引入 electron：所有跟主进程相关的东西（userData 路径、
  * 打包后的 resources 路径）都由调用方传进来，这样这个模块可以脱离
  * Electron 直接用 node 跑测试。
  */
 import { execFileSync, spawn } from 'child_process';
+import { dumpUi } from './uiauto';
 import { buildStoredZip } from './zip';
 import fs from 'fs';
 import os from 'os';
@@ -513,70 +514,123 @@ export async function uninstallApp(
 }
 
 /**
- * 在手机上打开一个文件夹（用手机自己的文件管理器）。
+ * 在手机上打开一个目录。
  *
- * 实测（三星 + Android 9）：
- *  - 必须带【尾斜杠】：file:///sdcard/Download/ 能直接进到目录里，
- *    file:///sdcard/Download（不带斜杠）只停在根目录
- *  - 不能带 -t resource/folder（会 unable to resolve）
- *  - 三星「我的文件」用显式组件才稳：com.sec.android.app.myfiles/.external.ui.MainActivity
- *  - 系统的 DocumentsUI 一遇到 document URI 就崩（这台机器上），所以只作兜底，
- *    而且只用不带 document uri 的写法
+ * 这台三星（SM-G9500 / Android 9）上把能试的都试了，只有一条路能真的导航：
+ *
+ *   ✅ am start -a VIEW
+ *        -d content://com.android.externalstorage.documents/root/primary
+ *        -t vnd.android.document/directory
+ *      → 打开「内部存储」根目录（实测两次都成，拿到的是真目录列表）
+ *
+ * 试过但不行的，别再走一遍：
+ *   ✗ file:///sdcard/Download/  → DocumentsUI 能起来，但【完全忽略路径】，
+ *      永远停在它自己的「下载」分类页。那是个只列安装包的分类，不是目录 ——
+ *      往里放一个 ZZTAG-A.txt 都不会出现，实测确认过。
+ *   ✗ content://…/document/primary%3ADownload → DocumentsUI 直接崩
+ *      （「文件屡次停止运行」）
+ *   ✗ 三星 MyFiles 带 file:// 或 content:// → 忽略路径。pm dump 查过，
+ *      它的 intent filter 里根本没有 VIEW + file 这条。
+ *
+ * 所以做法：先用能用的那条把根目录打开，再用 uiautomator 自己一层层点进去。
  */
 export async function openFolderOnPhone(
   file: string,
   folder: string,
   serial?: string,
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; steps?: string[] }> {
   const base = serial ? ['-s', serial] : [];
-  // 路径一定要以 / 结尾，否则只会停在根目录
   const dir = folder.endsWith('/') ? folder : `${folder}/`;
-  const uri = `file://${dir}`;
+  const steps: string[] = [];
 
-  // ① 三星「我的文件」
-  const pkgs = await runAdb(file, [...base, 'shell', 'pm', 'list', 'packages'], {
-    timeout: 20000,
+  // ① 拆路径：/sdcard/Download/sub/ → ['Download', 'sub']
+  const m = dir.match(/^\/(?:sdcard|storage\/emulated\/0)\/(.*)$/);
+  const segs = m
+    ? m[1]
+        .split('/')
+        .map((x) => x.trim())
+        .filter(Boolean)
+    : [];
+
+  // ② 打开存储根目录（唯一实测能用的写法）
+  // 关键：先 force-stop。文件管理器已经在后台时，Android 只会把旧任务
+  // 拉到前台，intent 里的路径被丢掉 —— 实测第二次调用就停在上一层不动了。
+  await runAdb(file, [...base, 'shell', 'am', 'force-stop', 'com.android.documentsui'], {
+    timeout: 15000,
   });
-  if (pkgs.stdout.includes('com.sec.android.app.myfiles')) {
-    const r = await runAdb(
-      file,
-      [
-        ...base,
-        'shell',
-        'am',
-        'start',
-        '-n',
-        'com.sec.android.app.myfiles/.external.ui.MainActivity',
-        '-d',
-        uri,
-      ],
-      { timeout: 20000 },
-    );
-    const out = (r.stdout + r.stderr).trim();
-    if (r.code === 0 && !/Error/i.test(out)) {
-      return { ok: true, message: `已在手机上打开 ${dir}` };
-    }
+  await new Promise((r) => setTimeout(r, 600));
+  const open = await runAdb(
+    file,
+    [
+      ...base,
+      'shell',
+      'am',
+      'start',
+      '-a',
+      'android.intent.action.VIEW',
+      '-d',
+      'content://com.android.externalstorage.documents/root/primary',
+      '-t',
+      'vnd.android.document/directory',
+    ],
+    { timeout: 20000 },
+  );
+  const out = (open.stdout + open.stderr).trim();
+  if (open.code !== 0 || /unable to resolve/i.test(out)) {
+    return { ok: false, message: out || '打不开手机上的文件管理器', steps };
+  }
+  steps.push('已打开「内部存储」根目录');
+  await new Promise((r) => setTimeout(r, 2500));
+
+  if (!segs.length) {
+    return { ok: true, message: '已在手机上打开存储根目录', steps };
   }
 
-  // ② 通用：DocumentsUI 的目录类型（不带 document uri，带 document uri 会崩）
-  const r2 = await runAdb(
-    file,
-    [...base, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', uri, '-t', 'vnd.android.document/directory'],
-    { timeout: 20000 },
-  );
-  if (r2.code === 0) return { ok: true, message: `已在手机上打开 ${dir}` };
+  // ③ 一层层点进去
+  for (const seg of segs) {
+    let hit: { bounds: number[] } | null = null;
+    let scrolls = 0;
+    for (let i = 0; i < 8 && !hit; i++) {
+      const d = await dumpUi(file, serial);
+      if (!d.ok) {
+        steps.push(`读界面失败：${d.message || '未知'}`);
+        break;
+      }
+      const found = d.nodes.find(
+        (n) => n.text.trim() === seg || n.desc.trim() === seg,
+      );
+      if (found) {
+        hit = found;
+        break;
+      }
+      // 可能在屏幕外 —— 列表按字母排，Download 在好几屏之后
+      await runAdb(
+        file,
+        [...base, 'shell', 'input', 'swipe', '540', '1700', '540', '700', '250'],
+        { timeout: 15000 },
+      );
+      await new Promise((r) => setTimeout(r, 350));
+      scrolls += 1;
+    }
+    if (!hit) {
+      steps.push(`没找到「${seg}」，停在这一层`);
+      return {
+        ok: true,
+        message: `已打开存储根目录，但没找到「${seg}」，需要你自己点一下`,
+        steps,
+      };
+    }
+    const [x1, y1, x2, y2] = hit.bounds;
+    const cx = Math.round((x1 + x2) / 2);
+    const cy = Math.round((y1 + y2) / 2);
+    await runAdb(file, [...base, 'shell', 'input', 'tap', String(cx), String(cy)], {
+      timeout: 15000,
+    });
+    steps.push(`点进了「${seg}」（滚了 ${scrolls} 屏，点的 ${cx},${cy}）`);
+    await new Promise((r) => setTimeout(r, 1800));
+  }
 
-  // ③ 兜底：不带 type，系统会弹「打开方式」让你选
-  const r3 = await runAdb(
-    file,
-    [...base, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', uri],
-    { timeout: 20000 },
-  );
-  const out3 = (r3.stdout + r3.stderr).trim();
-  return {
-    ok: r3.code === 0,
-    message: r3.code === 0 ? '已让手机打开文件管理器' : out3 || '打开失败',
-  };
+  return { ok: true, message: `已在手机上打开 ${dir}`, steps };
 }
 
 /** 重启一个已装应用：先强停，再按 LAUNCHER 拉起来 */
