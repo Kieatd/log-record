@@ -192,8 +192,21 @@ function onMouseDown(e: MouseEvent) {
   e.preventDefault();
   canvasRef.value?.focus();
   pressed = true;
+  lastMoveSentAt = 0;
+  // 移动和松手挂到 window 上，而不是画布上。
+  // 原来挂在画布上，还额外绑了 mouseleave → onMouseUp：
+  // 横向往边缘拖的时候鼠标一离开画布，就当成松手发了个 UP，
+  // 触摸中途断掉，后面拖的全丢了 —— 桌面（launcher）只收到半截滑动，
+  // 松手后自己弹回原来那一页。这就是「向右拖动松手又回原页」的原因。
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
   const { x, y } = toVideo(e);
   api.scrcpyTouch({ action: 'down', x, y });
+}
+
+function detachMouse() {
+  window.removeEventListener('mousemove', onMouseMove);
+  window.removeEventListener('mouseup', onMouseUp);
 }
 
 function onMouseMove(e: MouseEvent) {
@@ -207,9 +220,16 @@ function onMouseMove(e: MouseEvent) {
 }
 
 function onMouseUp(e: MouseEvent) {
+  detachMouse();
   if (!running.value || !pressed) return;
   pressed = false;
   const { x, y } = toVideo(e);
+  // 先补一个「最后位置」的 MOVE 再 UP：
+  // mousemove 是 30/s 节流的，如果最后 32ms 里鼠标窜了一段，
+  // 这段位移手机是不知道的 —— 补上，滑动的速度和终点才对
+  if (Date.now() - lastMoveSentAt > 32) {
+    api.scrcpyTouch({ action: 'move', x, y });
+  }
   api.scrcpyTouch({ action: 'up', x, y });
 }
 
@@ -291,6 +311,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  detachMouse();
   offPacket?.();
   stop();
 });
@@ -347,9 +368,6 @@ defineExpose({ stop, start });
         :class="{ 'sv-canvas-hidden': !running && !starting }"
         tabindex="0"
         @mousedown="onMouseDown"
-        @mousemove="onMouseMove"
-        @mouseup="onMouseUp"
-        @mouseleave="onMouseUp"
         @wheel="onWheel"
         @keydown="onKeyDown"
         @contextmenu.prevent
