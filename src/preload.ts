@@ -69,8 +69,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
     seed?: number;
     ignoreCrashes?: boolean;
     ignoreTimeouts?: boolean;
+    stayInApp?: boolean;
+    noSwipe?: boolean;
   }) => ipcRenderer.invoke('monkey:start', options),
   monkeyStop: () => ipcRenderer.invoke('monkey:stop'),
+  stressStart: (options: {
+    serial?: string;
+    packageName?: string;
+    count?: number;
+    intervalMs?: number;
+    swipeRatio?: number;
+  }) => ipcRenderer.invoke('stress:start', options),
+  stressStop: () => ipcRenderer.invoke('stress:stop'),
+  stressRunning: () => ipcRenderer.invoke('stress:running'),
+  onStressOutput: (callback: any) =>
+    ipcRenderer.on('stress:output', (_e, v) => callback(v)),
+  onStressProgress: (callback: any) =>
+    ipcRenderer.on('stress:progress', (_e, v) => callback(v)),
+  onStressEscaped: (callback: any) =>
+    ipcRenderer.on('stress:escaped', (_e, v) => callback(v)),
+  onStressClosed: (callback: any) =>
+    ipcRenderer.on('stress:closed', (_e, v) => callback(v)),
   onMonkeyOutput: (callback: any) =>
     ipcRenderer.on('monkey:output', (_e, v) => callback(v)),
   onMonkeyEvent: (callback: any) =>

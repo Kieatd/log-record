@@ -30,6 +30,15 @@ export interface MonkeyOptions {
    * 注意 -p 只限制能访问哪些 Activity，管不住这些按键。
    */
   stayInApp?: boolean;
+  /**
+   * 不滑动（只点按）。
+   *
+   * 通知栏只能靠「从屏幕顶部往下滑」拉下来（点状态栏没用），
+   * 而 monkey 的滑动是随机落在整个屏幕上的 —— 滑到顶部就会把通知栏拉下来。
+   * 看门狗能把它收起来，但 monkey 几十毫秒又滑一次，会反复闪现，
+   * 所以默认干脆不滑。要完整压测可以关掉这个选项。
+   */
+  noSwipe?: boolean;
   onOutput?: (line: string) => void;
   /** 每收到一个事件行回调一次，用来算进度 */
   onEvent?: (events: number) => void;
@@ -102,6 +111,10 @@ export function buildMonkeyArgs(options: MonkeyOptions): string[] {
       '--pct-trackball', '0',
       '--pct-flip', '0',
     );
+  }
+  if (options.noSwipe !== false) {
+    // 滑动和缩放都会产生「拖拽」手势，拖到屏幕顶部就把通知栏拉下来了
+    args.push('--pct-motion', '0', '--pct-pinchzoom', '0');
   }
   // -v 会每个事件打一行，用它算进度
   args.push('-v');
@@ -270,7 +283,7 @@ export function startMonkey(
       await stopMonkey(file, options.serial);
       options.onEscaped?.(top);
     }
-  }, 1500);
+  }, 500);
 
   return { ok: true, message: 'monkey 已开始' };
 }

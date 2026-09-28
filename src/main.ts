@@ -12,6 +12,7 @@ import {
 import fs from 'fs';
 import { fillDebugUrl } from './utils/uiauto';
 import { startMonkey, stopMonkey } from './utils/monkey';
+import { isStressRunning, startStress, stopStress } from './utils/stress';
 import { cancelPush, pushFiles } from './utils/push';
 import {
   injectKey,
@@ -123,6 +124,7 @@ const createWindow = () => {
   ipcMain.handle('checkIsUpdate', () =>
     checkForUpgrade(author.name, name, version),
   );
+
 
 
 
@@ -580,6 +582,8 @@ const createWindow = () => {
         seed?: number;
         ignoreCrashes?: boolean;
         ignoreTimeouts?: boolean;
+        stayInApp?: boolean;
+        noSwipe?: boolean;
       },
     ) => {
       const info = currentAdb();
@@ -593,6 +597,37 @@ const createWindow = () => {
       });
     },
   );
+
+  /* ---------------- 限定区域随机操作（monkey 的替代） ---------------- */
+
+  ipcMain.handle(
+    'stress:start',
+    async (
+      _,
+      payload: {
+        serial?: string;
+        packageName?: string;
+        count?: number;
+        intervalMs?: number;
+        swipeRatio?: number;
+      },
+    ) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      return startStress(info.file, {
+        ...payload,
+        onOutput: (line) => mainWindow.webContents.send('stress:output', line),
+        onProgress: (done, total) =>
+          mainWindow.webContents.send('stress:progress', { done, total }),
+        onEscaped: (top) => mainWindow.webContents.send('stress:escaped', top),
+        onClose: (reason) => mainWindow.webContents.send('stress:closed', reason),
+      });
+    },
+  );
+
+  ipcMain.handle('stress:stop', () => ({ ok: stopStress() }));
+
+  ipcMain.handle('stress:running', () => ({ running: isStressRunning() }));
 
   ipcMain.handle('monkey:stop', async () => {
     const info = currentAdb();

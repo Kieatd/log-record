@@ -737,11 +737,16 @@ const monkeyRunning = ref(false);
 const monkeyStarting = ref(false);
 /** monkey 实际记录下来的动作数（不是事件数，详见 utils/monkey.ts 的注释） */
 const monkeyActions = ref(0);
+/** 当前跑的是哪种方式（空 = 没在跑） */
+const runningMode = ref<'' | 'monkey' | 'stress'>('');
+const stressProgress = ref({ done: 0, total: 0 });
 const monkeyElapsed = ref(0);
 let monkeyTimer: ReturnType<typeof setInterval> | null = null;
 
 const MONKEY_KEY = 'Log Record$$monkeyConfig';
 const monkeyForm = reactive({
+  /** 方式：stress = 限定区域随机操作（默认），monkey = 官方 monkey */
+  mode: 'stress' as 'stress' | 'monkey',
   packageName: '',
   count: 500,
   throttle: 300,
@@ -751,6 +756,9 @@ const monkeyForm = reactive({
   // 默认只在应用内操作：monkey 默认配比里 BACK/HOME/切应用占了很大一块，
   // 跑一会儿必然把人踢回桌面（实测 1500 事件会掉到桌面 6 次）
   stayInApp: true,
+  // 默认不滑动：滑动拖到屏幕顶部会把通知栏拉下来（monkey 没有「别滑顶部」的参数，
+  // 看门狗虽然能收起，但它几十毫秒又滑一次，会反复闪现）
+  noSwipe: true,
   ...(() => {
     try {
       return JSON.parse(localStorage.getItem(MONKEY_KEY) || '{}');
@@ -786,6 +794,33 @@ async function startMonkeyRun() {
     monkeyOpen.value = true;
     return;
   }
+  // 限定区域模式：坐标由我们自己生成，严格限制在 App 内容区
+  if (monkeyForm.mode === 'stress') {
+    monkeyStarting.value = true;
+    monkeyActions.value = 0;
+    monkeyElapsed.value = 0;
+    stressProgress.value = { done: 0, total: monkeyForm.count };
+    try {
+      const res = await api.stressStart({
+        serial: currentSerial.value,
+        packageName: monkeyForm.packageName,
+        count: monkeyForm.count,
+        intervalMs: monkeyForm.stressIntervalMs,
+        swipeRatio: monkeyForm.stressSwipeRatio,
+      });
+      if (!res.ok) {
+        message.error(res.message);
+        return;
+      }
+      runningMode.value = 'stress';
+      if (monkeyTimer) clearInterval(monkeyTimer);
+      monkeyTimer = setInterval(() => (monkeyElapsed.value += 1), 1000);
+    } finally {
+      monkeyStarting.value = false;
+    }
+    return;
+  }
+
   // 种子：留着能复现问题，所以随机生成后写回表单显示出来
   if (!monkeyForm.seed) {
     monkeyForm.seed = Math.floor(Math.random() * 1000000);
@@ -803,6 +838,7 @@ async function startMonkeyRun() {
       return;
     }
     monkeyRunning.value = true;
+    runningMode.value = 'monkey';
     // 回显真实参数，别只写一半 —— 之前漏了 stayInApp 那三个归零参数，
     // 日志里看着和实际跑的对不上
     const flags = monkeyForm.stayInApp
@@ -825,6 +861,10 @@ async function startMonkeyRun() {
 }
 
 async function stopMonkeyRun() {
+  if (runningMode.value === 'stress') {
+    await api.stressStop();
+    return;
+  }
   await api.monkeyStop();
 }
 
@@ -1135,6 +1175,34 @@ onMounted(async () => {
   if (api.onAdbProgress) {
     api.onAdbProgress((payload: InstallProgressState) => onInstallProgress(payload));
   }
+  if (api.onStressOutput) {
+    api.onStressOutput((line: string) => {
+      const bad = /⚠️|跑出|停止/.test(line);
+      pushLog(line, bad ? 'err' : 'info');
+    });
+  }
+  if (api.onStressProgress) {
+    api.onStressProgress((p: { done: number; total: number }) => {
+      stressProgress.value = p;
+      monkeyActions.value = p.done;
+    });
+  }
+  if (api.onStressEscaped) {
+    api.onStressEscaped((top: string) => {
+      pushLog(`${i18n.t('跑出目标应用了（当前是')} ${top}），${i18n.t('已自动停止')}`, 'err');
+      message.warning(i18n.t('跑出目标应用了，已自动停止'));
+    });
+  }
+  if (api.onStressClosed) {
+    api.onStressClosed(() => {
+      monkeyRunning.value = false;
+      runningMode.value = '';
+      if (monkeyTimer) {
+        clearInterval(monkeyTimer);
+        monkeyTimer = null;
+      }
+    });
+  }
   if (api.onMonkeyOutput) {
     api.onMonkeyOutput((line: string) => {
       // 崩溃/无响应单独标红，一眼能看见
@@ -1159,6 +1227,7 @@ onMounted(async () => {
   if (api.onMonkeyClosed) {
     api.onMonkeyClosed(() => {
       monkeyRunning.value = false;
+      runningMode.value = '';
       if (monkeyTimer) {
         clearInterval(monkeyTimer);
         monkeyTimer = null;
@@ -1538,13 +1607,19 @@ function deviceSubtitle(d: AdbDevice) {
             <LoadingOutlined v-if="monkeyStarting" spin />
             <BugOutlined v-else />
           </div>
-          <div class="tile-title">{{ $t('Monkey 压测') }}</div>
+          <div class="tile-title">
+            {{ monkeyForm.mode === 'stress' ? $t('区域随机操作') : $t('Monkey 压测') }}
+          </div>
           <div class="tile-desc">
             <template v-if="monkeyRunning">
-              {{ $t('运行中') }} · {{ $t('约') }} {{ monkeyActions }} {{ $t('个动作') }} ·
+              {{ runningMode === 'stress' ? $t('限定区域操作中') : $t('monkey 运行中') }} ·
+              {{ monkeyActions }} / {{ stressProgress.total || monkeyForm.count }} ·
               {{ monkeyElapsedText() }}
             </template>
-            <template v-else>{{ $t('点这里开始跑') }}</template>
+            <template v-else>
+              {{ monkeyForm.mode === 'stress' ? $t('限定区域操作') : $t('Monkey 压测') }} ·
+              {{ $t('点这里开始跑') }}
+            </template>
           </div>
         </div>
         <div class="tile-half tile-half-shots" @click="openMonkeySettings">
@@ -1750,6 +1825,20 @@ function deviceSubtitle(d: AdbDevice) {
     >
       <div class="mk-form">
         <div class="mk-row">
+          <span class="mk-label">{{ $t('方式') }}</span>
+          <a-radio-group v-model:value="monkeyForm.mode" size="small">
+            <a-radio value="stress">{{ $t('限定区域（推荐）') }}</a-radio>
+            <a-radio value="monkey">{{ $t('官方 monkey') }}</a-radio>
+          </a-radio-group>
+        </div>
+        <div class="mk-tip">
+          {{
+            monkeyForm.mode === 'stress'
+              ? $t('坐标由我们自己生成，严格限制在 App 内容区内 —— 不会碰到通知栏和导航栏，每次操作都落在 App 上；代价是慢一些（约 2~3 次/秒）')
+              : $t('官方的 monkey：快（30+ 次/秒），但触摸坐标在整个屏幕上随机，会随机把通知栏拉下来、点到导航栏')
+          }}
+        </div>
+        <div class="mk-row">
           <span class="mk-label">{{ $t('测试哪个应用') }}</span>
           <a-select
             v-model:value="monkeyForm.packageName"
@@ -1765,10 +1854,28 @@ function deviceSubtitle(d: AdbDevice) {
           <span class="mk-label">{{ $t('事件数量') }}</span>
           <a-input-number v-model:value="monkeyForm.count" :min="1" :max="1000000" size="small" style="flex: 1" />
         </div>
-        <div class="mk-row">
+        <div v-if="monkeyForm.mode === 'monkey'" class="mk-row">
           <span class="mk-label">{{ $t('间隔（毫秒）') }}</span>
           <a-input-number v-model:value="monkeyForm.throttle" :min="0" :max="10000" size="small" style="flex: 1" />
         </div>
+        <template v-else>
+          <div class="mk-row">
+            <span class="mk-label">{{ $t('操作间隔') }}</span>
+            <a-input-number v-model:value="monkeyForm.stressIntervalMs" :min="0" :max="5000" size="small" style="flex: 1" />
+            <span class="mk-hint">{{ $t('毫秒，越小越快') }}</span>
+          </div>
+          <div class="mk-row">
+            <span class="mk-label">{{ $t('滑动比例') }}</span>
+            <a-slider
+              v-model:value="monkeyForm.stressSwipeRatio"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              style="flex: 1"
+            />
+            <span class="mk-hint">{{ Math.round(monkeyForm.stressSwipeRatio * 100) }}%</span>
+          </div>
+        </template>
         <div class="mk-row">
           <span class="mk-label">{{ $t('随机种子') }}</span>
           <a-input-number v-model:value="monkeyForm.seed" :min="0" size="small" style="flex: 1" />
@@ -1777,6 +1884,15 @@ function deviceSubtitle(d: AdbDevice) {
         <div class="mk-row">
           <a-checkbox v-model:checked="monkeyForm.ignoreCrashes">{{ $t('忽略崩溃继续跑') }}</a-checkbox>
           <a-checkbox v-model:checked="monkeyForm.ignoreTimeouts">{{ $t('忽略无响应继续跑') }}</a-checkbox>
+        </div>
+        <div class="mk-row">
+          <a-tooltip
+            :title="$t('通知栏只能靠从屏幕顶部往下滑拉下来，而 monkey 的滑动是随机的；不勾这个的话它会时不时把通知栏拉下来')"
+          >
+            <a-checkbox v-model:checked="monkeyForm.noSwipe">
+              {{ $t('不滑动（避免拉下通知栏）') }}
+            </a-checkbox>
+          </a-tooltip>
         </div>
         <div class="mk-row">
           <a-tooltip
