@@ -133,7 +133,7 @@ const viewerOpen = ref(false);
 const viewerUrl = ref('');
 const viewerName = ref('');
 
-const wifiIp = ref('');
+const wifiIp = ref(localStorage.getItem('Log Record$$wifiIp') || '');
 const busyWifi = ref(false);
 
 const customCmd = ref('');
@@ -895,6 +895,19 @@ let pushTimer: ReturnType<typeof setInterval> | null = null;
 const PUSH_DEST_KEY = 'Log Record$$pushDest';
 const pushDest = ref(localStorage.getItem(PUSH_DEST_KEY) || '/sdcard/Download/');
 const pushDestOpen = ref(false);
+// 无线调试：IP 设置的弹层
+const WIFI_IP_KEY = 'Log Record$$wifiIp';
+const wifiIpOpen = ref(false);
+const saveWifiIp = () => {
+  localStorage.setItem(WIFI_IP_KEY, wifiIp.value.trim());
+  wifiIpOpen.value = false;
+  message.success(i18n.t('保存成功'));
+};
+// 自定义命令：执行后是否清空输入
+const CUSTOM_CLEAR_KEY = 'Log Record$$customClearAfter';
+const customClearAfter = ref(localStorage.getItem(CUSTOM_CLEAR_KEY) !== '0');
+watch(customClearAfter, (v) => localStorage.setItem(CUSTOM_CLEAR_KEY, v ? '1' : '0'));
+
 
 function savePushDest() {
   const v = pushDest.value.trim() || '/sdcard/Download/';
@@ -1152,6 +1165,7 @@ async function runCustom() {
   try {
     const res = await api.adbShell(cmd, currentSerial.value);
     pushLog(res.message, res.ok ? 'ok' : 'err');
+    if (customClearAfter.value) customCmd.value = '';
   } finally {
     busyCustom.value = false;
   }
@@ -1387,8 +1401,8 @@ function deviceSubtitle(d: AdbDevice) {
         @dragover="onDragOver"
         @dragleave="onDragLeave"
         @drop="onDrop"
-        @click="onInstallTileClick"
       >
+        <div class="tile-main" @click="onInstallTileClick">
         <div class="tile-icon">
           <LoadingOutlined v-if="installing" spin />
           <AppstoreAddOutlined v-else />
@@ -1419,32 +1433,49 @@ function deviceSubtitle(d: AdbDevice) {
           <div class="tile-desc">
             {{ dragging ? $t('松手就开始安装') : $t('把 .apk 拖到这里，或点击选择') }}
           </div>
+        </template>
+        </div>
+
+        <!-- 右：配置 -->
+        <div class="tile-side">
           <!-- 包一层 guard：antd 的 checkbox 根元素是 label，会往内部 input
                再派发一次 click，事件照样冒泡到磁贴，光在 checkbox 上写
                @click.stop 拦不住 -->
           <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-checkbox v-model:checked="autoOpen" class="tile-check" :disabled="!ready">
+            <a-checkbox v-model:checked="autoOpen" class="tile-side-check" :disabled="!ready">
               {{ $t('安装后自动打开') }}
             </a-checkbox>
           </span>
-        </template>
+        </div>
       </div>
 
       <!-- 卸载应用 -->
-      <div
-        class="tile"
-        :class="{ 'tile-disabled': !ready }"
-        @click="ready && openUninstall()"
-      >
-        <div class="tile-icon"><DeleteOutlined /></div>
-        <div class="tile-title">{{ $t('卸载应用') }}</div>
-        <div class="tile-desc">{{ $t('查看手机上装的应用并卸载') }}</div>
+      <div class="tile" :class="{ 'tile-disabled': !ready }">
+        <div class="tile-main" @click="ready && openUninstall()">
+          <div class="tile-icon"><DeleteOutlined /></div>
+          <div class="tile-title">{{ $t('卸载应用') }}</div>
+          <div class="tile-desc">{{ $t('查看手机上装的应用并卸载') }}</div>
+        </div>
+        <div class="tile-side">
+          <span class="tile-guard" @click.stop @mousedown.stop>
+            <a-tooltip :title="$t('默认只看用户装的 App')">
+              <a-checkbox
+                v-model:checked="includeSystem"
+                class="tile-side-check"
+                :disabled="!ready"
+                @change="loadPackages"
+              >
+                {{ $t('显示系统应用') }}
+              </a-checkbox>
+            </a-tooltip>
+          </span>
+        </div>
       </div>
 
       <!-- 截图：左边截屏，右边是最近一张缩略图（点开看全部） -->
-      <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
+      <div class="tile" :class="{ 'tile-disabled': !ready }">
         <div
-          class="tile-half tile-half-act"
+          class="tile-main"
           :class="{ 'tile-half-disabled': shooting }"
           @click="ready && !shooting && takeScreenshot()"
         >
@@ -1458,7 +1489,8 @@ function deviceSubtitle(d: AdbDevice) {
           </div>
         </div>
 
-        <div class="tile-half tile-half-shots" @click="ready && openShots()">
+        <div class="tile-side">
+        <div class="tile-side-entry" @click="ready && openShots()">
           <a-tooltip :title="$t('查看截图记录')">
             <a-badge
               :count="unseenCount"
@@ -1478,22 +1510,20 @@ function deviceSubtitle(d: AdbDevice) {
               </div>
             </a-badge>
           </a-tooltip>
-          <div class="tile-desc">{{ $t('截图记录') }}</div>
+          <div class="tile-side-entry-label">{{ $t('截图记录') }}</div>
+        </div>
         </div>
       </div>
 
       <!-- 屏幕常亮 -->
-      <div
-        class="tile"
-        :class="{ 'tile-disabled': !ready || busyStayOn }"
-        @click="toggleStayAwake"
-      >
-
-        <div class="tile-head">
+      <div class="tile" :class="{ 'tile-disabled': !ready || busyStayOn }">
+        <div class="tile-main" @click="toggleStayAwake">
           <div class="tile-icon">
             <LoadingOutlined v-if="busyStayOn" spin />
             <BulbOutlined v-else />
           </div>
+          <div class="tile-title">{{ $t('屏幕常亮') }}</div>
+          <div class="tile-desc">{{ stayAwakeDesc }}</div>
           <span class="tile-guard" @click.stop @mousedown.stop>
             <a-switch
               size="small"
@@ -1504,30 +1534,23 @@ function deviceSubtitle(d: AdbDevice) {
             />
           </span>
         </div>
-        <div class="tile-title">{{ $t('屏幕常亮') }}</div>
-        <div class="tile-desc">{{ stayAwakeDesc }}</div>
-        <span class="tile-guard" @click.stop @mousedown.stop>
-          <a-checkbox v-model:checked="autoStayOn" class="tile-check">
-            {{ $t('连接后自动开启') }}
-          </a-checkbox>
-        </span>
+        <div class="tile-side">
+          <span class="tile-guard" @click.stop @mousedown.stop>
+            <a-checkbox v-model:checked="autoStayOn" class="tile-side-check">
+              {{ $t('连接后自动开启') }}
+            </a-checkbox>
+          </span>
+        </div>
       </div>
 
       <!-- 无线连接 -->
       <div class="tile" :class="{ 'tile-disabled': !ready }">
-        <div class="tile-icon"><WifiOutlined /></div>
-        <a-tooltip :title="$t('插线时点一次「开启」，之后拔线也能用')">
-          <div class="tile-title">{{ $t('无线调试') }}</div>
-        </a-tooltip>
-        <div class="tile-desc">{{ $t('插线开启一次，之后可拔线') }}</div>
-        <div class="tile-stack">
-          <a-input
-            v-model:value="wifiIp"
-            size="small"
-            :placeholder="$t('手机 IP，例如 192.168.1.5')"
-            :disabled="!ready"
-            @click.stop
-          />
+        <div class="tile-main tile-main-flat">
+          <div class="tile-icon"><WifiOutlined /></div>
+          <a-tooltip :title="$t('插线时点一次「开启」，之后拔线也能用')">
+            <div class="tile-title">{{ $t('无线调试') }}</div>
+          </a-tooltip>
+          <div class="tile-desc">{{ $t('插线开启一次，之后可拔线') }}</div>
           <div class="tile-row">
             <a-button size="small" :disabled="!ready" :loading="busyWifi" @click.stop="enableWifi">
               <UsbOutlined />
@@ -1536,7 +1559,7 @@ function deviceSubtitle(d: AdbDevice) {
             <a-button
               size="small"
               type="primary"
-              :disabled="!ready && !wifiIp"
+              :disabled="!wifiIp"
               :loading="busyWifi"
               @click.stop="connectWifi"
             >
@@ -1545,39 +1568,58 @@ function deviceSubtitle(d: AdbDevice) {
             </a-button>
           </div>
         </div>
+        <div class="tile-side">
+          <a-tooltip :title="$t('要连的手机 IP，例如 192.168.1.5')">
+            <div class="tile-side-entry" @click="wifiIpOpen = true">
+              <SettingOutlined class="tile-side-entry-icon" />
+              <div class="tile-side-entry-label">
+                {{ wifiIp ? $t('已设 IP') : $t('设置 IP') }}
+              </div>
+            </div>
+          </a-tooltip>
+        </div>
       </div>
 
       <!-- 自定义命令 -->
       <div class="tile" :class="{ 'tile-disabled': !ready }">
-        <div class="tile-icon"><ThunderboltOutlined /></div>
-        <div class="tile-title">{{ $t('自定义命令') }}</div>
-        <div class="tile-desc">{{ $t('直接跑 adb shell 命令') }}</div>
-        <div class="tile-row">
-          <a-input
-            v-model:value="customCmd"
-            size="small"
-            :placeholder="$t('例如 pm list packages -3')"
-            :disabled="!ready"
-            @press-enter="runCustom"
-            @click.stop
-          />
-          <a-button
-            size="small"
-            type="primary"
-            :disabled="!ready || !customCmd.trim()"
-            :loading="busyCustom"
-            @click.stop="runCustom"
-          >
-            <PlayCircleOutlined />
-            {{ $t('执行') }}
-          </a-button>
+        <div class="tile-main tile-main-flat">
+          <div class="tile-icon"><ThunderboltOutlined /></div>
+          <div class="tile-title">{{ $t('自定义命令') }}</div>
+          <div class="tile-row">
+            <a-input
+              v-model:value="customCmd"
+              size="small"
+              :placeholder="$t('例如 pm list packages -3')"
+              :disabled="!ready"
+              @press-enter="runCustom"
+            />
+            <a-button
+              size="small"
+              type="primary"
+              :disabled="!ready || !customCmd.trim()"
+              :loading="busyCustom"
+              @click.stop="runCustom"
+            >
+              <PlayCircleOutlined />
+              {{ $t('执行') }}
+            </a-button>
+          </div>
+        </div>
+        <div class="tile-side">
+          <span class="tile-guard" @click.stop @mousedown.stop>
+            <a-tooltip :title="$t('跑完自动把输入框清空')">
+              <a-checkbox v-model:checked="customClearAfter" class="tile-side-check">
+                {{ $t('执行后清空') }}
+              </a-checkbox>
+            </a-tooltip>
+          </span>
         </div>
       </div>
 
       <!-- 一键填调试地址：左边填+点设置，右边设置 -->
-      <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
+      <div class="tile" :class="{ 'tile-disabled': !ready }">
         <div
-          class="tile-half tile-half-act"
+          class="tile-main"
           :class="{ 'tile-half-disabled': fillBusy }"
           @click="ready && !fillBusy && fillDebugUrl()"
         >
@@ -1590,16 +1632,18 @@ function deviceSubtitle(d: AdbDevice) {
             {{ $t('打开 App 调试页后点这里') }}
           </div>
         </div>
-        <div class="tile-half tile-half-shots" @click="openFillSettings">
-          <SettingOutlined class="tile-open" />
-          <div class="tile-desc">{{ $t('设置') }}</div>
+        <div class="tile-side">
+          <div class="tile-side-entry" @click="openFillSettings">
+            <SettingOutlined class="tile-side-entry-icon" />
+            <div class="tile-side-entry-label">{{ $t('设置') }}</div>
+          </div>
         </div>
       </div>
 
       <!-- Monkey 压测：左边开始，右边设置参数 -->
-      <div class="tile tile-split" :class="{ 'tile-disabled': !ready }">
+      <div class="tile" :class="{ 'tile-disabled': !ready }">
         <div
-          class="tile-half tile-half-act"
+          class="tile-main"
           :class="{ 'tile-half-disabled': monkeyStarting }"
           @click="ready && !monkeyStarting && toggleMonkey()"
         >
@@ -1622,9 +1666,11 @@ function deviceSubtitle(d: AdbDevice) {
             </template>
           </div>
         </div>
-        <div class="tile-half tile-half-shots" @click="openMonkeySettings">
-          <SettingOutlined class="tile-open" />
-          <div class="tile-desc">{{ $t('设置参数') }}</div>
+        <div class="tile-side">
+          <div class="tile-side-entry" @click="openMonkeySettings">
+            <SettingOutlined class="tile-side-entry-icon" />
+            <div class="tile-side-entry-label">{{ $t('设置参数') }}</div>
+          </div>
         </div>
       </div>
 
@@ -1635,13 +1681,11 @@ function deviceSubtitle(d: AdbDevice) {
         @dragover="onPushDragOver"
         @dragleave="onPushDragLeave"
         @drop="onPushDrop"
-        @click="ready && !pushing && pickAndPush()"
       >
-        <div class="tile-head">
-          <div class="tile-icon">
-            <LoadingOutlined v-if="pushing" spin />
-            <UploadOutlined v-else />
-          </div>
+        <div class="tile-main" @click="ready && !pushing && pickAndPush()">
+        <div class="tile-icon">
+          <LoadingOutlined v-if="pushing" spin />
+          <UploadOutlined v-else />
         </div>
         <div class="tile-title">{{ $t('传文件到手机') }}</div>
         <template v-if="pushing">
@@ -1673,27 +1717,33 @@ function deviceSubtitle(d: AdbDevice) {
               </div>
             </a-tooltip>
           </span>
-          <!-- 两个入口一直显示：改接收目录 / 在手机上打开这个目录 -->
-          <div class="tile-guard tile-push-actions" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('改接收目录')">
-              <a-button size="small" class="tile-push-btn" @click="pushDestOpen = true">
-                <SettingOutlined />
-                {{ $t('改目录') }}
-              </a-button>
-            </a-tooltip>
+        </template>
+        </div>
+
+        <!-- 右：配置（两个入口一直显示） -->
+        <div class="tile-side">
+          <span class="tile-guard" @click.stop @mousedown.stop>
             <a-tooltip :title="$t('在手机上打开这个文件夹')">
-              <a-button
-                size="small"
-                class="tile-push-btn"
-                :disabled="!ready"
+              <div
+                class="tile-side-entry"
+                :class="{ 'tile-side-entry-off': !ready }"
                 @click="openFolderOnPhone"
               >
-                <FolderOpenOutlined />
-                {{ $t('打开手机目录') }}
-              </a-button>
+                <FolderOpenOutlined class="tile-side-entry-icon" />
+                <div class="tile-side-entry-label">{{ $t('打开手机目录') }}</div>
+              </div>
             </a-tooltip>
-          </div>
-        </template>
+          </span>
+          <div class="tile-side-divider"></div>
+          <span class="tile-guard" @click.stop @mousedown.stop>
+            <a-tooltip :title="$t('改接收目录')">
+              <div class="tile-side-entry" @click="pushDestOpen = true">
+                <SettingOutlined class="tile-side-entry-icon" />
+                <div class="tile-side-entry-label">{{ $t('改接收目录') }}</div>
+              </div>
+            </a-tooltip>
+          </span>
+        </div>
       </div>
     </div>
 
@@ -1937,6 +1987,30 @@ function deviceSubtitle(d: AdbDevice) {
           <PlayCircleOutlined />
           {{ $t('开始') }}
         </a-button>
+      </div>
+    </a-modal>
+
+    <!-- 无线调试：手机 IP -->
+    <a-modal
+      v-model:open="wifiIpOpen"
+      :title="$t('无线调试设置')"
+      :footer="null"
+      width="420px"
+    >
+      <div class="set-item">
+        <div class="set-label">{{ $t('手机 IP') }}</div>
+        <a-input
+          v-model:value="wifiIp"
+          size="small"
+          :placeholder="$t('例如 192.168.1.5')"
+          @press-enter="saveWifiIp"
+        />
+        <div class="set-tip">
+          {{ $t('插着线点「开启」时，如果手机上显示 IP 会自动填进来') }}
+        </div>
+      </div>
+      <div class="set-foot">
+        <a-button size="small" type="primary" @click="saveWifiIp">{{ $t('保存') }}</a-button>
       </div>
     </a-modal>
 
@@ -2246,16 +2320,102 @@ function deviceSubtitle(d: AdbDevice) {
      把最小行高定成 167，所有行就都一样高了（内容更多的行会自动长高） */
   grid-auto-rows: minmax(167px, auto);
 }
+/* 统一磁贴：左边=启动（点它执行），右边=配置（这个磁贴的设置） */
 .tile {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background-color: #fff;
+  cursor: default;
+  overflow: hidden;
+  transition: all 0.2s;
+}
+/* 左：启动区。点这块 = 执行这个磁贴的主操作 */
+.tile-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 10px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  background-color: #fff;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color 0.2s;
+}
+.tile-main:hover {
+  background-color: #3366660d;
+}
+.tile-main-flat {
+  cursor: default;
+}
+.tile-main-flat:hover {
+  background-color: transparent;
+}
+/* 右：配置区。放这个磁贴的设置（开关/按钮/设置入口），宽度所有磁贴一致 */
+.tile-side {
+  width: 104px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-left: 1px solid #f0f0f0;
+  background-color: #fafafa;
+}
+.tile-side-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #999;
+}
+.tile-side-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 4px;
+  border-radius: 4px;
+  width: 100%;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+.tile-side-entry:hover {
+  background-color: #33666614;
+  color: #336666;
+}
+.tile-side-entry-icon {
+  font-size: 16px;
+  color: #336666;
+}
+.tile-side-entry-label {
+  font-size: 11px;
+  color: #666;
+  text-align: center;
+  line-height: 1.25;
+}
+.tile-side-entry:hover .tile-side-entry-label {
+  color: #336666;
+}
+.tile-side-check {
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: normal;
+  margin: 0;
+}
+.tile-side-check :deep(.ant-checkbox-wrapper) {
+  font-size: 11px;
+  align-items: flex-start;
+}
+.tile-side-divider {
+  width: 80%;
+  height: 1px;
+  background-color: #eee;
 }
 .tile:hover {
   border-color: #336666;
@@ -2367,14 +2527,7 @@ function deviceSubtitle(d: AdbDevice) {
 }
 
 /* ---- 截图磁贴：左右两半 ---- */
-.tile-split {
-  flex-direction: row;
-  align-items: stretch;
-  gap: 0;
-  padding: 0;
-  cursor: default;
-  overflow: hidden;
-}
+/* 兼容：老的 tile-split 现在就是普通 .tile（已经是左右两栏了） */
 .tile-split:hover {
   border-color: #d9d9d9;
   box-shadow: none;
@@ -2399,6 +2552,10 @@ function deviceSubtitle(d: AdbDevice) {
 }
 .tile-half-disabled {
   cursor: wait;
+}
+.tile-side-entry-off {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 /* 右半：最近一张缩略图，点开看全部 */
 .tile-half-shots {

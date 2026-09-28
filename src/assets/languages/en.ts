@@ -235,9 +235,18 @@ export default {
   '设置参数': 'Settings',
   '传文件到手机': 'Send files to phone',
   '改接收目录': 'Change destination folder',
-
+  '显示系统应用': 'Show system apps',
+  '默认只看用户装的 App': 'By default only user-installed apps are listed',
+  '执行后清空': 'Clear after run',
+  '跑完自动把输入框清空': 'Clear the input box after running',
+  '已设 IP': 'IP set',
+  '设置 IP': 'Set IP',
+  '要连的手机 IP，例如 192.168.1.5': 'Phone IP to connect, e.g. 192.168.1.5',
+  '无线调试设置': 'Wireless debug settings',
+  '手机 IP': 'Phone IP',
+  '例如 192.168.1.5': 'e.g. 192.168.1.5',
+  '插着线点「开启」时，如果手机上显示 IP 会自动填进来': 'When you tap Enable while plugged in, the IP shown on the phone is filled in automatically',
   '打开手机目录': 'Open on phone',
-
   '改目录': 'Folder',
   '把文件拖到这里，或点击选择': 'Drop files here, or click to pick',
   '松手就开始传': 'Release to send',
@@ -263,22 +272,8 @@ export default {
   '只在应用内操作（不发 BACK/HOME）': 'Stay inside the app (no BACK/HOME)',
   'monkey 默认有相当比例的事件是 BACK/HOME/切换应用，跑一会儿就会回到桌面；勾上就只发点按滑动这类应用内操作': 'By default a large share of monkey events are BACK / HOME / app-switch, so it will drop you back to the launcher. Tick this to only send in-app events like taps and swipes',
   '不勾「只在应用内操作」的话，它还会按 BACK/HOME 和切换应用，那是 monkey 的默认行为': 'Without this, monkey also presses BACK/HOME and switches apps — that is monkey default behaviour',
-
-
-
   '设置': 'Settings',
-
-
-
-
-
-
-
-
   '重启': 'Restarting',
-
-
-
   '填调试地址': 'Fill debug URL',
   '打开 App 调试页后点这里': 'Open the app debug page, then click here',
   '填调试地址设置': 'Fill debug URL settings',
@@ -292,12 +287,6 @@ export default {
   '地址填好了，记得重启 App 才生效': 'Address filled — remember to restart the app for it to take effect',
   '用法：先在手机上把 App 的调试页打开（就是填调试Url那个页面），再点磁贴左半边。它会自动找到输入框、清空、填上本机 IP、点按钮，最后重启 App': 'How to use: open the app debug page on the phone first (the one with the debug URL field), then click the left half of the tile. It finds the input, clears it, types this PC IP, taps the button, then restarts the app',
   '填完会回读一次输入框内容做校验，不对就不会去点按钮': 'After typing it reads the field back to verify; if it does not match it will not tap the button',
-
-
-
-
-
-
   'IP 没变时也重填': 'Refill even when the IP is unchanged',
   '默认情况下，IP 没变就直接跳过填写（只重启 App），这样最快': 'By default, if the IP has not changed it skips filling (only restarts the app) — that is the fastest path',
   '上次已经填过': 'Already filled',
