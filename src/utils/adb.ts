@@ -603,6 +603,49 @@ export async function openFolderOnPhone(
   };
 }
 
+/**
+ * 读手机上的「adb 安装应用需要确认」开关（secure 设置，各家 ROM 都有）。
+ *
+ * 实测（HONOR BND-AL10 / Android 7 / EMUI 5）：
+ *   这个值是 1 时，pm install 会一直卡住等用户在手机上点「安装」——
+ *   实测卡了 400 秒还没结束，而手机上弹出了安装界面。
+ *   改成 0 之后同一条命令直接 Success，手机上什么都不弹。
+ * （三星 SM-G9500 上这个值本来就是 0，所以一直是静默安装。）
+ */
+export async function getInstallConfirm(file: string, serial?: string): Promise<boolean | null> {
+  const base = serial ? ['-s', serial] : [];
+  const r = await runAdb(file, [...base, 'shell', 'settings', 'get', 'secure', 'adb_install_need_confirm'], {
+    timeout: 15000,
+  });
+  const v = (r.stdout || '').trim();
+  if (v === '0') return false;
+  if (v === '1') return true;
+  return null;
+}
+
+/** 关掉/打开手机上那个「adb 安装需要确认」 */
+export async function setInstallConfirm(
+  file: string,
+  on: boolean,
+  serial?: string,
+): Promise<{ ok: boolean; message: string }> {
+  const base = serial ? ['-s', serial] : [];
+  const r = await runAdb(
+    file,
+    [...base, 'shell', 'settings', 'put', 'secure', 'adb_install_need_confirm', on ? '1' : '0'],
+    { timeout: 15000 },
+  );
+  const out = (r.stdout + r.stderr).trim();
+  if (r.code !== 0) return { ok: false, message: out || '改写失败' };
+  const now = await getInstallConfirm(file, serial);
+  return {
+    ok: now === !on,
+    message: now === !on
+      ? on ? '已恢复「安装需要确认」' : '已关掉手机上的安装确认，之后拖进去就直接装'
+      : `改写了但读回来还是 ${now}`,
+  };
+}
+
 /** 重启一个已装应用：先强停，再按 LAUNCHER 拉起来 */
 export async function restartApp(
   file: string,

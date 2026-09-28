@@ -235,12 +235,34 @@ async function openFolderOnPhone() {
   else message.error(res.message);
 }
 
+// 手机上的「adb 安装需要确认」：true=需要确认（会弹安装界面），false=静默装
+const installConfirm = ref<boolean | null>(null);
+
+async function loadInstallConfirm() {
+  if (!currentSerial.value) {
+    installConfirm.value = null;
+    return;
+  }
+  const res = await api.adbGetInstallConfirm(currentSerial.value);
+  installConfirm.value = res.ok ? res.value : null;
+}
+
+/** checked 表示「跳过确认」→ 手机上那个值要设成 false */
+async function toggleSkipConfirm(checked: boolean) {
+  const res = await api.adbSetInstallConfirm(!checked, currentSerial.value);
+  pushLog(res.message, res.ok ? 'ok' : 'err');
+  if (res.ok) message.success(res.message);
+  else message.error(res.message);
+  await loadInstallConfirm();
+}
+
 async function selectDevice(serial: string) {
   if (serial === currentSerial.value) return;
   // 投屏投的是当前设备，换设备要先停掉（面板留着，方便在新设备上重开）
   if (mirrorRunning.value) await mirrorRef.value?.stop();
   currentSerial.value = serial;
   await loadStayAwake();
+  await loadInstallConfirm();
 }
 
 async function loadStayAwake() {
@@ -1267,11 +1289,12 @@ onMounted(async () => {
   localIp.value = await api.getIPAddress();
   await loadDevices();
   await loadStayAwake();
+  await loadInstallConfirm();
 });
 
 onActivated(() => {
   // keep-alive 缓存了页面，切回来时刷新一下设备（可能刚插线/刚拔线）
-  loadDevices().then(loadStayAwake);
+  loadDevices().then(() => loadStayAwake().then(loadInstallConfirm));
   // 切回来也刷一下截图记录：可能刚截过图或者删过图
   loadShotCount();
   loadLatestShot();
@@ -1447,6 +1470,20 @@ function deviceSubtitle(d: AdbDevice) {
               {{ $t('安装后自动打开') }}
             </a-checkbox>
           </span>
+          <a-tooltip
+            :title="$t('有些手机（比如华为荣耀）默认要求 adb 安装时在手机上点确认，勾上就免了')"
+          >
+            <span class="tile-guard" @click.stop @mousedown.stop>
+              <a-checkbox
+                class="tile-side-check"
+                :checked="installConfirm === false"
+                :disabled="!ready || installConfirm === null"
+                @change="(e: any) => toggleSkipConfirm(e.target.checked)"
+              >
+                {{ $t('跳过安装确认') }}
+              </a-checkbox>
+            </span>
+          </a-tooltip>
         </div>
       </div>
 

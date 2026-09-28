@@ -46,6 +46,8 @@ import {
   listPackages,
   loadCustomAdbPath,
   openFolderOnPhone,
+  getInstallConfirm,
+  setInstallConfirm,
   readInstallTimes,
   restartApp,
   readInstalledAppLabels,
@@ -217,6 +219,18 @@ const createWindow = () => {
   ipcMain.handle('adb:setPath', (_, adbPath: string) => {
     saveCustomAdbPath(adbPathFile, adbPath || '');
     return currentAdb();
+  });
+
+  ipcMain.handle('adb:getInstallConfirm', async (_, serial?: string) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, value: null };
+    return { ok: true, value: await getInstallConfirm(info.file, serial) };
+  });
+
+  ipcMain.handle('adb:setInstallConfirm', async (_, payload: { on: boolean; serial?: string }) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, message: '没找到 adb' };
+    return setInstallConfirm(info.file, payload.on, payload.serial);
   });
 
   ipcMain.handle('adb:devices', async () => {

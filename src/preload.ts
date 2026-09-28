@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbPick: () => ipcRenderer.invoke('adb:pick'),
   adbSetPath: (adbPath: string) => ipcRenderer.invoke('adb:setPath', adbPath),
   adbDevices: () => ipcRenderer.invoke('adb:devices'),
+  adbGetInstallConfirm: (serial?: string) => ipcRenderer.invoke('adb:getInstallConfirm', serial),
+  adbSetInstallConfirm: (on: boolean, serial?: string) => ipcRenderer.invoke('adb:setInstallConfirm', { on, serial }),
   adbInstall: (
     apkPath: string,
     serial?: string,
