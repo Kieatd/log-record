@@ -43,6 +43,11 @@ let frameCount = 0;
 let byteCount = 0;
 let statTimer: ReturnType<typeof setInterval> | null = null;
 let pressed = false;
+let pressWatchdog: ReturnType<typeof setTimeout> | null = null;
+/** 最后一次已知的手指位置：补发 UP 时要用它，合成事件里没有坐标 */
+let lastPoint = { x: 0, y: 0 };
+/** 按着超过这么久没有任何移动，就强制松开（防止松手事件丢了手指一直按着） */
+const PRESS_WATCHDOG_MS = 8000;
 let lastMoveSentAt = 0;
 
 /** 画布坐标 → 视频坐标（注入触摸要用视频坐标系） */
@@ -200,30 +205,69 @@ function onMouseDown(e: MouseEvent) {
   // 松手后自己弹回原来那一页。这就是「向右拖动松手又回原页」的原因。
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
+  // 松手可能收不到 —— 见 detachMouse 上面的注释
+  window.addEventListener('blur', onMouseUpForced);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  armWatchdog();
   const { x, y } = toVideo(e);
+  lastPoint = { x, y };
   api.scrcpyTouch({ action: 'down', x, y });
 }
 
 function detachMouse() {
   window.removeEventListener('mousemove', onMouseMove);
   window.removeEventListener('mouseup', onMouseUp);
+  window.removeEventListener('blur', onMouseUpForced);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  if (pressWatchdog !== null) {
+    clearTimeout(pressWatchdog);
+    pressWatchdog = null;
+  }
+}
+
+/**
+ * 松手事件的保险。
+ *
+ * 只靠 window 的 mouseup 还不够：窗口失焦、鼠标在窗口外松开、或者事件丢了，
+ * mouseup 就永远收不到 —— 手机上那根"手指"会一直按着不放。
+ * 桌面（launcher）按久了就进入"长按拖图标"状态，此后**应用页怎么滑都滑不动**
+ * （但"应用建议"那种独立页面还能滑，因为不走工作区）。
+ * 实测就是这样：卡住之后连 adb 原生滑动都翻不了页，按一下返回 / 点空白才恢复。
+ *
+ * 所以窗口失焦、页面被隐藏、或者按着超过 8 秒没任何移动，都强制补一个 UP。
+ */
+function onMouseUpForced() {
+  if (!pressed) return;
+  // 用最后已知位置，别用合成事件里的 (0,0) —— 那会让手指先跳到左上角再松开
+  releaseTouch(lastPoint.x, lastPoint.y);
+}
+function onVisibilityChange() {
+  if (document.hidden) onMouseUpForced();
+}
+
+function armWatchdog() {
+  if (pressWatchdog !== null) clearTimeout(pressWatchdog);
+  pressWatchdog = setTimeout(() => {
+    pressWatchdog = null;
+    if (pressed) onMouseUpForced();
+  }, PRESS_WATCHDOG_MS);
 }
 
 function onMouseMove(e: MouseEvent) {
   if (!running.value || !pressed) return;
+  armWatchdog();
   // 别把每个 mousemove 都发过去，30/s 够了
   const now = Date.now();
   if (now - lastMoveSentAt < 32) return;
   lastMoveSentAt = now;
   const { x, y } = toVideo(e);
+  lastPoint = { x, y };
   api.scrcpyTouch({ action: 'move', x, y });
 }
 
-function onMouseUp(e: MouseEvent) {
-  detachMouse();
-  if (!running.value || !pressed) return;
+function releaseTouch(x: number, y: number) {
+  if (!pressed) return;
   pressed = false;
-  const { x, y } = toVideo(e);
   // 先补一个「最后位置」的 MOVE 再 UP：
   // mousemove 是 30/s 节流的，如果最后 32ms 里鼠标窜了一段，
   // 这段位移手机是不知道的 —— 补上，滑动的速度和终点才对
@@ -231,6 +275,13 @@ function onMouseUp(e: MouseEvent) {
     api.scrcpyTouch({ action: 'move', x, y });
   }
   api.scrcpyTouch({ action: 'up', x, y });
+}
+
+function onMouseUp(e: MouseEvent) {
+  detachMouse();
+  if (!running.value || !pressed) return;
+  const { x, y } = toVideo(e);
+  releaseTouch(x, y);
 }
 
 function onWheel(e: WheelEvent) {
