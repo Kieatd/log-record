@@ -238,22 +238,39 @@ async function openFolderOnPhone() {
 // 手机上的「adb 安装需要确认」：true=需要确认（会弹安装界面），false=静默装
 const installConfirm = ref<boolean | null>(null);
 
+// 这台手机每次 adb shell settings 要 2~4 秒。读得慢就可能在"用户点了勾选框
+// 并乐观更新"之后才返回，把旧值盖回去（实测 3 秒后被盖回 false）。
+// 用序号把过期结果丢掉。
+let confirmSeq = 0;
+
 async function loadInstallConfirm() {
+  const seq = ++confirmSeq;
   if (!currentSerial.value) {
     installConfirm.value = null;
     return;
   }
   const res = await api.adbGetInstallConfirm(currentSerial.value);
+  if (seq !== confirmSeq) return; // 已经有更新的读取发起了，这次的结果作废
   installConfirm.value = res.ok ? res.value : null;
 }
 
-/** checked 表示「跳过确认」→ 手机上那个值要设成 false */
+/**
+ * checked 表示「跳过确认」→ 手机上那个值要设成 false。
+ *
+ * 先乐观更新界面：这台 HONOR 上每次 adb shell settings 要 2~4 秒，
+ * 写完回读再回读一共 3 个来回 ≈ 8 秒 —— 干等的话勾选框 8 秒不动，
+ * 看着像没点上。失败时才回读纠正。
+ */
 async function toggleSkipConfirm(checked: boolean) {
+  confirmSeq += 1; // 作废在途的旧读取，别让它把刚更新的状态盖回去
+  installConfirm.value = !checked;
   const res = await api.adbSetInstallConfirm(!checked, currentSerial.value);
   pushLog(res.message, res.ok ? 'ok' : 'err');
   if (res.ok) message.success(res.message);
-  else message.error(res.message);
-  await loadInstallConfirm();
+  else {
+    message.error(res.message);
+    await loadInstallConfirm();
+  }
 }
 
 async function selectDevice(serial: string) {
@@ -261,8 +278,8 @@ async function selectDevice(serial: string) {
   // 投屏投的是当前设备，换设备要先停掉（面板留着，方便在新设备上重开）
   if (mirrorRunning.value) await mirrorRef.value?.stop();
   currentSerial.value = serial;
-  await loadStayAwake();
-  await loadInstallConfirm();
+  loadStayAwake();
+  loadInstallConfirm();
 }
 
 async function loadStayAwake() {
@@ -1288,13 +1305,17 @@ onMounted(async () => {
   await loadAdb();
   localIp.value = await api.getIPAddress();
   await loadDevices();
-  await loadStayAwake();
-  await loadInstallConfirm();
+  // 这两个都各自要跑几次 adb，串着等会让页面半天才可交互 —— 并行发出去
+  loadStayAwake();
+  loadInstallConfirm();
 });
 
 onActivated(() => {
   // keep-alive 缓存了页面，切回来时刷新一下设备（可能刚插线/刚拔线）
-  loadDevices().then(() => loadStayAwake().then(loadInstallConfirm));
+  loadDevices().then(() => {
+    loadStayAwake();
+    loadInstallConfirm();
+  });
   // 切回来也刷一下截图记录：可能刚截过图或者删过图
   loadShotCount();
   loadLatestShot();
@@ -1477,7 +1498,7 @@ function deviceSubtitle(d: AdbDevice) {
               <a-checkbox
                 class="tile-side-check"
                 :checked="installConfirm === false"
-                :disabled="!ready || installConfirm === null"
+                :disabled="!ready"
                 @change="(e: any) => toggleSkipConfirm(e.target.checked)"
               >
                 {{ $t('跳过安装确认') }}

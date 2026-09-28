@@ -637,12 +637,18 @@ export async function setInstallConfirm(
   );
   const out = (r.stdout + r.stderr).trim();
   if (r.code !== 0) return { ok: false, message: out || '改写失败' };
+
+  // 写完读回来核对：now 应该等于刚写进去的 on
+  // （之前这里写成 !== on 的反面 !on，条件反了 —— 明明改成功却报「读回来还是 …」）
   const now = await getInstallConfirm(file, serial);
+  const ok = now === on;
   return {
-    ok: now === !on,
-    message: now === !on
-      ? on ? '已恢复「安装需要确认」' : '已关掉手机上的安装确认，之后拖进去就直接装'
-      : `改写了但读回来还是 ${now}`,
+    ok,
+    message: ok
+      ? on
+        ? '已恢复「安装需要确认」'
+        : '已关掉手机上的安装确认，之后拖进去就直接装'
+      : `改写了但读回来还是「${now === null ? '读不到' : now ? '需要确认' : '不用确认'}」`,
   };
 }
 
