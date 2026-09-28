@@ -235,6 +235,10 @@ export default {
   '设置参数': 'Settings',
   '传文件到手机': 'Send files to phone',
   '改接收目录': 'Change destination folder',
+
+  '打开手机目录': 'Open on phone',
+
+  '改目录': 'Folder',
   '把文件拖到这里，或点击选择': 'Drop files here, or click to pick',
   '松手就开始传': 'Release to send',
   '正在传到': 'Sending to',

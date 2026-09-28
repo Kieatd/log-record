@@ -1642,11 +1642,6 @@ function deviceSubtitle(d: AdbDevice) {
             <LoadingOutlined v-if="pushing" spin />
             <UploadOutlined v-else />
           </div>
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('改接收目录')">
-              <FolderOpenOutlined class="tile-open" @click="pushDestOpen = true" />
-            </a-tooltip>
-          </span>
         </div>
         <div class="tile-title">{{ $t('传文件到手机') }}</div>
         <template v-if="pushing">
@@ -1675,10 +1670,29 @@ function deviceSubtitle(d: AdbDevice) {
             <a-tooltip :title="$t('在手机上打开这个文件夹')">
               <div class="tile-desc tile-open-folder" @click="openFolderOnPhone">
                 → {{ pushDest }}
-                <FolderOpenOutlined class="tile-open-folder-icon" />
               </div>
             </a-tooltip>
           </span>
+          <!-- 两个入口一直显示：改接收目录 / 在手机上打开这个目录 -->
+          <div class="tile-guard tile-push-actions" @click.stop @mousedown.stop>
+            <a-tooltip :title="$t('改接收目录')">
+              <a-button size="small" class="tile-push-btn" @click="pushDestOpen = true">
+                <SettingOutlined />
+                {{ $t('改目录') }}
+              </a-button>
+            </a-tooltip>
+            <a-tooltip :title="$t('在手机上打开这个文件夹')">
+              <a-button
+                size="small"
+                class="tile-push-btn"
+                :disabled="!ready"
+                @click="openFolderOnPhone"
+              >
+                <FolderOpenOutlined />
+                {{ $t('打开手机目录') }}
+              </a-button>
+            </a-tooltip>
+          </div>
         </template>
       </div>
     </div>
@@ -2331,9 +2345,21 @@ function deviceSubtitle(d: AdbDevice) {
 .tile-open-folder:hover {
   color: #336666;
 }
-.tile-open-folder-icon {
-  font-size: 12px;
+/* 传文件磁贴底部那两个常驻按钮 */
+.tile-push-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
   flex-shrink: 0;
+}
+.tile-push-actions :deep(.tile-push-btn) {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 0 6px;
 }
 .tile-cancel {
   margin-top: 4px;
