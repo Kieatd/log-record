@@ -6,7 +6,6 @@
  * Electron 直接用 node 跑测试。
  */
 import { execFileSync, spawn } from 'child_process';
-import { dumpUi } from './uiauto';
 import { buildStoredZip } from './zip';
 import fs from 'fs';
 import os from 'os';
@@ -516,23 +515,33 @@ export async function uninstallApp(
 /**
  * 在手机上打开一个目录。
  *
- * 这台三星（SM-G9500 / Android 9）上把能试的都试了，只有一条路能真的导航：
+ * 一条命令直接到位，不点、不滚：
  *
- *   ✅ am start -a VIEW
- *        -d content://com.android.externalstorage.documents/root/primary
- *        -t vnd.android.document/directory
- *      → 打开「内部存储」根目录（实测两次都成，拿到的是真目录列表）
+ *   am force-stop com.android.documentsui
+ *   am start -a android.intent.action.OPEN_DOCUMENT
+ *     -c android.intent.category.OPENABLE
+ *     -t vnd.android.document/directory
+ *     --eu android.provider.extra.INITIAL_URI
+ *        content://com.android.externalstorage.documents/document/primary%3A<文件夹>
  *
- * 试过但不行的，别再走一遍：
- *   ✗ file:///sdcard/Download/  → DocumentsUI 能起来，但【完全忽略路径】，
- *      永远停在它自己的「下载」分类页。那是个只列安装包的分类，不是目录 ——
- *      往里放一个 ZZTAG-A.txt 都不会出现，实测确认过。
- *   ✗ content://…/document/primary%3ADownload → DocumentsUI 直接崩
- *      （「文件屡次停止运行」）
- *   ✗ 三星 MyFiles 带 file:// 或 content:// → 忽略路径。pm dump 查过，
- *      它的 intent filter 里根本没有 VIEW + file 这条。
+ * 两个关键点（都是踩出来的）：
  *
- * 所以做法：先用能用的那条把根目录打开，再用 uiautomator 自己一层层点进去。
+ * ① EXTRA_INITIAL_URI 是 **Uri 类型**，必须用 `--eu` 传。
+ *    用 `--es`（String）传，对方 getParcelableExtra 读出来是 null ——
+ *    界面照常打开、只是安静地忽略路径，看起来像"成功"了。
+ *
+ * ② 必须先 force-stop 文件管理器。
+ *    它已经在后台时，Android 只把旧任务拉到前台，新的路径被丢掉 ——
+ *    实测连续切三个目录，只有第一次生效，后两次都停在第一个目录。
+ *    （0.1 秒的事，比"滚屏找目录再点"那 15 秒划算太多。）
+ *
+ * 文档 URI 的 id 要转义：`primary:Download/Camera` → `primary%3ADownload%2FCamera`
+ * （encodeURIComponent 正好干这个）
+ *
+ * 别的方式都试过、这条机器上不行，留个记录：
+ *   ✗ file:///sdcard/Download/        → DocumentsUI 忽略路径，停在「下载」分类页
+ *   ✗ content://…/document/… 配 VIEW  → DocumentsUI 直接崩
+ *   ✗ 三星 MyFiles 带什么参数都没用    → 它的 intent filter 里没有 VIEW+file
  */
 export async function openFolderOnPhone(
   file: string,
@@ -541,25 +550,30 @@ export async function openFolderOnPhone(
 ): Promise<{ ok: boolean; message: string; steps?: string[] }> {
   const base = serial ? ['-s', serial] : [];
   const dir = folder.endsWith('/') ? folder : `${folder}/`;
-  const steps: string[] = [];
 
-  // ① 拆路径：/sdcard/Download/sub/ → ['Download', 'sub']
-  const m = dir.match(/^\/(?:sdcard|storage\/emulated\/0)\/(.*)$/);
-  const segs = m
-    ? m[1]
-        .split('/')
-        .map((x) => x.trim())
-        .filter(Boolean)
-    : [];
+  // 路径 → 文档 id
+  let docId: string | null = null;
+  const internal = dir.match(/^\/(?:sdcard|storage\/emulated\/0)\/(.*)$/);
+  if (internal) {
+    docId = `primary:${internal[1].replace(/\/+$/, '')}`;
+  } else {
+    // 外置 SD：/storage/XXXX-XXXX/xxx → XXXX-XXXX:xxx
+    const sd = dir.match(/^\/storage\/([0-9A-Fa-f]{4}-[0-9A-Fa-f]{4})\/(.*)$/);
+    if (sd) docId = `${sd[1]}:${sd[2].replace(/\/+$/, '')}`;
+  }
+  if (!docId) {
+    return { ok: false, message: `暂不支持这个路径：${dir}（只支持内部存储和 SD 卡）` };
+  }
 
-  // ② 打开存储根目录（唯一实测能用的写法）
-  // 关键：先 force-stop。文件管理器已经在后台时，Android 只会把旧任务
-  // 拉到前台，intent 里的路径被丢掉 —— 实测第二次调用就停在上一层不动了。
+  const uri = `content://com.android.externalstorage.documents/document/${encodeURIComponent(docId)}`;
+
+  // ① 先关掉文件管理器，否则新路径会被丢掉（见上面②）
   await runAdb(file, [...base, 'shell', 'am', 'force-stop', 'com.android.documentsui'], {
     timeout: 15000,
   });
-  await new Promise((r) => setTimeout(r, 600));
-  const open = await runAdb(
+
+  // ② 一条命令直接开到那个目录
+  const r = await runAdb(
     file,
     [
       ...base,
@@ -567,70 +581,26 @@ export async function openFolderOnPhone(
       'am',
       'start',
       '-a',
-      'android.intent.action.VIEW',
-      '-d',
-      'content://com.android.externalstorage.documents/root/primary',
+      'android.intent.action.OPEN_DOCUMENT',
+      '-c',
+      'android.intent.category.OPENABLE',
       '-t',
       'vnd.android.document/directory',
+      '--eu',
+      'android.provider.extra.INITIAL_URI',
+      uri,
     ],
     { timeout: 20000 },
   );
-  const out = (open.stdout + open.stderr).trim();
-  if (open.code !== 0 || /unable to resolve/i.test(out)) {
-    return { ok: false, message: out || '打不开手机上的文件管理器', steps };
+  const out = (r.stdout + r.stderr).trim();
+  if (r.code !== 0 || /unable to resolve|Error/i.test(out)) {
+    return { ok: false, message: out || '打不开手机上的文件管理器' };
   }
-  steps.push('已打开「内部存储」根目录');
-  await new Promise((r) => setTimeout(r, 2500));
-
-  if (!segs.length) {
-    return { ok: true, message: '已在手机上打开存储根目录', steps };
-  }
-
-  // ③ 一层层点进去
-  for (const seg of segs) {
-    let hit: { bounds: number[] } | null = null;
-    let scrolls = 0;
-    for (let i = 0; i < 8 && !hit; i++) {
-      const d = await dumpUi(file, serial);
-      if (!d.ok) {
-        steps.push(`读界面失败：${d.message || '未知'}`);
-        break;
-      }
-      const found = d.nodes.find(
-        (n) => n.text.trim() === seg || n.desc.trim() === seg,
-      );
-      if (found) {
-        hit = found;
-        break;
-      }
-      // 可能在屏幕外 —— 列表按字母排，Download 在好几屏之后
-      await runAdb(
-        file,
-        [...base, 'shell', 'input', 'swipe', '540', '1700', '540', '700', '250'],
-        { timeout: 15000 },
-      );
-      await new Promise((r) => setTimeout(r, 350));
-      scrolls += 1;
-    }
-    if (!hit) {
-      steps.push(`没找到「${seg}」，停在这一层`);
-      return {
-        ok: true,
-        message: `已打开存储根目录，但没找到「${seg}」，需要你自己点一下`,
-        steps,
-      };
-    }
-    const [x1, y1, x2, y2] = hit.bounds;
-    const cx = Math.round((x1 + x2) / 2);
-    const cy = Math.round((y1 + y2) / 2);
-    await runAdb(file, [...base, 'shell', 'input', 'tap', String(cx), String(cy)], {
-      timeout: 15000,
-    });
-    steps.push(`点进了「${seg}」（滚了 ${scrolls} 屏，点的 ${cx},${cy}）`);
-    await new Promise((r) => setTimeout(r, 1800));
-  }
-
-  return { ok: true, message: `已在手机上打开 ${dir}`, steps };
+  return {
+    ok: true,
+    message: `已在手机上打开 ${dir}`,
+    steps: [`文档 URI：${uri}`],
+  };
 }
 
 /** 重启一个已装应用：先强停，再按 LAUNCHER 拉起来 */
