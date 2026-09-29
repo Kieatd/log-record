@@ -193,6 +193,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('adb:tcpip', { serial, port }),
   adbConnect: (address: string, port?: number) =>
     ipcRenderer.invoke('adb:connect', { address, port }),
+  adbLocalSwipe: (payload: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    duration: number;
+    serial?: string;
+  }) => ipcRenderer.invoke('adb:localSwipe', payload),
+  adbForeground: (serial?: string) => ipcRenderer.invoke('adb:foreground', serial),
+  adbScreenSize: (serial?: string) => ipcRenderer.invoke('adb:screenSize', serial),
   adbShell: (command: string, serial?: string) =>
     ipcRenderer.invoke('adb:shell', { command, serial }),
   onAdbOutput: (callback: any) =>

@@ -770,6 +770,64 @@ const createWindow = () => {
     },
   );
 
+  // 投屏拖动松手时的「兜底翻页」：用手机本地 input swipe 再走一次。
+  // 原因：我们注入的触摸是经由 adb 控制通道送到手机的，事件时间戳由 scrcpy 服务端
+  // 在收到消息那一刻生成；多条消息落在同一毫秒时 Android 的 VelocityTracker
+  // 遇到 dt=0 会直接中断速度计算 → 桌面按「速度为 0」吸附回原页。
+  // input swipe 是手机本地生成事件，时间戳天然连续，所以桌面一定认。
+  ipcMain.handle(
+    'adb:localSwipe',
+    async (
+      _,
+      payload: {
+        x1: number;
+        y1: number;
+        x2: number;
+        y2: number;
+        duration: number;
+        serial?: string;
+      },
+    ) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      const args = [
+        'shell',
+        'input',
+        'swipe',
+        String(Math.round(payload.x1)),
+        String(Math.round(payload.y1)),
+        String(Math.round(payload.x2)),
+        String(Math.round(payload.y2)),
+        String(Math.round(payload.duration)),
+      ];
+      if (payload.serial) args.unshift('-s', payload.serial);
+      const res = await runAdb(info.file, args, { timeout: 15000 });
+      return { ok: res.code === 0, message: (res.stdout + res.stderr).trim() };
+    },
+  );
+
+  // 当前前台应用的包名（判断是不是桌面，决定要不要兜底翻页）
+  ipcMain.handle('adb:foreground', async (_, serial?: string) => {
+    const info = currentAdb();
+    if (!info.found) return '';
+    const args = ['shell', 'dumpsys', 'window'];
+    if (serial) args.unshift('-s', serial);
+    const res = await runAdb(info.file, args, { timeout: 15000 });
+    const m = res.stdout.match(/mCurrentFocus=Window\{[^}]*?\s([\w.]+)\//);
+    return m ? m[1] : '';
+  });
+
+  // 手机真实屏幕分辨率（把视频坐标换算成屏幕坐标，兜底滑动要用）
+  ipcMain.handle('adb:screenSize', async (_, serial?: string) => {
+    const info = currentAdb();
+    if (!info.found) return '';
+    const args = ['shell', 'wm', 'size'];
+    if (serial) args.unshift('-s', serial);
+    const res = await runAdb(info.file, args, { timeout: 15000 });
+    const m = res.stdout.match(/(\d+)x(\d+)/);
+    return m ? `${m[1]}x${m[2]}` : '';
+  });
+
   // 重新请求：由主进程发出去（渲染进程发会受 CORS 限制）
   ipcMain.handle(
     'sendRequest',
