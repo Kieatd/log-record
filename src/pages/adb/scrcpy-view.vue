@@ -219,6 +219,15 @@ async function start() {
         if (m) deviceSize = { w: Number(m[1]), h: Number(m[2]) };
       })
       .catch(() => {});
+    // 预热「当前前台应用」：兜底翻页要用它判断是不是桌面，
+    // 不预热的话第一次拖动会因为还没取到而静默不生效
+    foregroundAt = Date.now();
+    api
+      .adbForeground(props.serial || undefined)
+      .then((pkg: string) => {
+        foregroundApp = pkg || '';
+      })
+      .catch(() => {});
     statTimer = setInterval(() => {
       fps.value = frameCount;
       packetKb.value = Math.round(byteCount / 1024);
