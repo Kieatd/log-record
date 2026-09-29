@@ -289,7 +289,11 @@ export async function injectTouch(payload: {
       videoWidth: current.videoWidth,
       videoHeight: current.videoHeight,
       pressure: pressed ? (payload.pressure ?? 1) : 0,
-      actionButton: pressed ? 1 : 0,
+      // actionButton = 「触发这次事件的按键」。用手指拖动时它应该是 0：
+      // 官方示例里 MOVE 事件的 actionButton 是 undefined（= 0），只有 DOWN/UP
+      // 才带按键。之前一律写 1，等于告诉手机「鼠标左键按着拖」——
+      // 桌面会把这种拖动当成「鼠标拖拽」而不是「手指滑动」，页面就翻不过去。
+      actionButton: action === ACTION_DOWN || action === ACTION_UP ? 1 : 0,
       buttons: pressed ? 1 : 0,
     });
     return { ok: true };
