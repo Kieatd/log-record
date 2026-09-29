@@ -80,13 +80,51 @@ let lastMoveSentAt = 0;
 const SAMPLE_MS = 7;
 /** 每个采样点至少朝目标推进「鼠标速度 × SAMPLE_MS × 这个系数」 */
 const MIN_STEP_FACTOR = 1.2;
-/**
- * 已经停住多久（没再发过 MOVE）就算「停下再松手」。
- * 这种情况下桌面会认为速度为 0，需要补一个「还在动」的采样（见 releaseTouch）。
- */
-const STALE_MS = 40;
 /** 补的那个采样至少走这么远（视频像素），保证速度足够被桌面当成甩动 */
 const FLING_ASSIST_MIN_PX = 20;
+/**
+ * 松手时「终点 MOVE」和「UP」之间至少隔这么久。
+ *
+ * 手机侧的时间戳是 scrcpy 服务端**收到消息的那一刻**打的 —— 两条消息要是落在同一毫秒，
+ * Android 的 VelocityTracker 遇到 dt=0 会直接中断速度计算，速度算成 0，页面就弹回。
+ * 所以这两条必须真的隔开（实测 7ms 太紧，给 12ms）。
+ */
+const FINAL_GAP_MS = 12;
+/**
+ * 相邻两次注入之间至少隔这么久（渲染层串行排队发）。
+ * 也是为了不让多条控制消息挤在同一毫秒里被服务端当成同时发生。
+ */
+const MIN_SEND_GAP_MS = 5;
+
+/**
+ * 串行发送队列。
+ * 投屏的触摸是「一帧一个点」的流，顺序和间隔都很重要；
+ * 所有注入都从这里排队发出，避免乱序或挤在一起。
+ */
+let sendChain: Promise<void> = Promise.resolve();
+let lastSendAt = 0;
+
+function sendTouch(payload: {
+  action: 'down' | 'up' | 'move';
+  x: number;
+  y: number;
+}): Promise<void> {
+  sendChain = sendChain
+    .then(async () => {
+      const wait = MIN_SEND_GAP_MS - (Date.now() - lastSendAt);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      lastSendAt = Date.now();
+      try {
+        const res = await api.scrcpyTouch(payload);
+        reportTouchFail(res);
+      } catch {
+        /* 网络断了就算了，下一次会重新报 */
+      }
+    })
+    // 链条必须保持「已结算」：任何一步抛错都不能让后面的注入永远发不出去
+    .catch(() => {});
+  return sendChain;
+}
 
 /** 画布坐标 → 视频坐标（注入触摸要用视频坐标系） */
 function toVideo(e: MouseEvent) {
@@ -120,7 +158,12 @@ function ensureDecoder(codec: number) {
   }
 }
 
-function onPacket(packet: { type: string; keyframe?: boolean; pts?: string; data: Uint8Array }) {
+function onPacket(packet: {
+  type: string;
+  keyframe?: boolean;
+  pts?: string;
+  data: Uint8Array;
+}) {
   frameCount += 1;
   byteCount += packet.data?.length || 0;
   if (!decoder) {
@@ -275,7 +318,7 @@ function onMouseDown(e: MouseEvent) {
   mouseSpeed = 0;
   lastMoveEvent = { t: performance.now(), x, y };
   startSampling();
-  api.scrcpyTouch({ action: 'down', x, y }).then(reportTouchFail).catch(() => {});
+  sendTouch({ action: 'down', x, y });
 }
 
 function startSampling() {
@@ -313,7 +356,7 @@ function sampleTick() {
   const y = sentPoint.y + (dy / dist) * step;
   sentPoint = { x, y };
   lastMoveSentAt = Date.now();
-  api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
+  sendTouch({ action: 'move', x, y });
 }
 
 function detachMouse() {
@@ -392,17 +435,20 @@ function onMouseMove(e: MouseEvent) {
  *
  * 手机桌面（EMUI）松手时**只看速度**：拖动本身会让页面跟手，但最终「翻页还是弹回」
  * 取决于松手瞬间的速度。鼠标用户是「拖到位 → 停一下 → 松手」，停顿时速度已经归零，
- * 所以必然弹回 —— 跟拖了多远无关。（用户实测的旁证：拖到一半按一下右键再松手
+ * 所以会弹回 —— 跟拖了多远无关。（用户实测的旁证：拖到一半按一下右键再松手
  * 就不会弹回 —— 因为那等于在「还在动」的时候松手。）
  *
- * 所以「停住之后再松手」时，补一次「手指还在朝前动」的采样：
- *     MOVE(松手位置) → 8ms → UP(再往前一步的位置)
- * 让最后一对采样带着真实位移和速度，桌面才会当成甩动。
+ * 所以拖动结束时，总是补一次「手指还在朝前动」的采样：
+ *     MOVE(松手位置) → 12ms → UP(再往前一步的位置)
+ * 让最后一对采样带着真实位移和速度。
  *
- * 两点很关键：
- * 1). 最后一对采样必须是「新」的（间隔 8ms 左右）—— 手机侧算速度只回看 100ms，
- *     隔了 150ms 的采样对会被直接忽略。
- * 2). 绝不能补「和上一条完全相同位置」的样本 —— 那会把速度算成 0，反而弹回（见 37ab7d1）。
+ * 三点很关键：
+ * 1). 最后一对采样必须真的隔开（≥ 12ms）—— 服务端把两条消息挤在同一毫秒时，
+ *     VelocityTracker 遇到 dt=0 会直接中断计算，速度算成 0（这也是「同一段流
+ *     用独立探针注入能翻、从应用里注入却翻不了」的根因）。
+ * 2). 绝不能补「和上一条完全相同位置」的样本（同 dt=0 的坑，见 37ab7d1）。
+ * 3). 已经在屏幕边缘（前进方向出界）时，改成「先往回退一步，再在松手位置抬起」——
+ *     最后一对采样依然是朝前的。
  */
 function releaseTouch(x: number, y: number) {
   if (!pressed) return;
@@ -412,12 +458,11 @@ function releaseTouch(x: number, y: number) {
   const vw = canvas?.width || meta.value?.width || 1;
   const vh = canvas?.height || meta.value?.height || 1;
   const moved = x !== sentPoint.x || y !== sentPoint.y;
-  const stale = Date.now() - lastMoveSentAt > STALE_MS;
   const dragDist = Math.hypot(x - dragStart.x, y - dragStart.y);
   // 真正的「拖动」才补；轻触照旧（别把点击弄坏）
   const isDrag = dragDist > vw * 0.05;
 
-  if (isDrag && stale) {
+  if (isDrag) {
     // 方向取整段拖动的方向：比用最后一个样本稳（鼠标手抖不会把方向带偏）
     const dx = x - dragStart.x;
     const dy = y - dragStart.y;
@@ -426,37 +471,33 @@ function releaseTouch(x: number, y: number) {
     const uy = dy / len;
     const step = Math.max(
       FLING_ASSIST_MIN_PX,
-      mouseSpeed * SAMPLE_MS * MIN_STEP_FACTOR,
+      Math.max(mouseSpeed, 0.5) * FINAL_GAP_MS * MIN_STEP_FACTOR,
     );
     const aheadX = x + ux * step;
     const aheadY = y + uy * step;
     if (aheadX >= 0 && aheadX <= vw && aheadY >= 0 && aheadY <= vh) {
       // 先把手指放到松手位置，再往前一步抬起（最后一对采样 = 朝前的一步）
-      api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
+      sendTouch({ action: 'move', x, y });
       setTimeout(() => {
-        api.scrcpyTouch({ action: 'up', x: aheadX, y: aheadY })
-          .then(reportTouchFail)
-          .catch(() => {});
-      }, SAMPLE_MS);
+        sendTouch({ action: 'up', x: aheadX, y: aheadY });
+      }, FINAL_GAP_MS);
     } else {
       // 已经到屏幕边缘，没法再往前 → 先往回退一步，再在松手位置抬起
       // （这样最后一对采样依然是朝前的）
       const backX = Math.max(0, Math.min(vw, x - ux * step));
       const backY = Math.max(0, Math.min(vh, y - uy * step));
-      api.scrcpyTouch({ action: 'move', x: backX, y: backY })
-        .then(reportTouchFail)
-        .catch(() => {});
+      sendTouch({ action: 'move', x: backX, y: backY });
       setTimeout(() => {
-        api.scrcpyTouch({ action: 'up', x, y }).then(reportTouchFail).catch(() => {});
-      }, SAMPLE_MS);
+        sendTouch({ action: 'up', x, y });
+      }, FINAL_GAP_MS);
     }
     return;
   }
 
-  if (moved && !stale) {
-    api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
+  if (moved) {
+    sendTouch({ action: 'move', x, y });
   }
-  api.scrcpyTouch({ action: 'up', x, y }).then(reportTouchFail).catch(() => {});
+  sendTouch({ action: 'up', x, y });
 }
 
 function onMouseUp(e: MouseEvent) {
@@ -471,7 +512,12 @@ function onWheel(e: WheelEvent) {
   e.preventDefault();
   const { x, y } = toVideo(e);
   // Chrome 一个滚轮格 deltaY 约为 ±100，换算成 scrcpy 的 ±1
-  api.scrcpyScroll({ x, y, scrollX: -e.deltaX / 100, scrollY: -e.deltaY / 100 });
+  api.scrcpyScroll({
+    x,
+    y,
+    scrollX: -e.deltaX / 100,
+    scrollY: -e.deltaY / 100,
+  });
 }
 
 /* ---------------- 键盘 → keycode ---------------- */
@@ -556,37 +602,81 @@ defineExpose({ stop, start });
   <div class="scrcpy-view">
     <div class="sv-head">
       <span class="sv-title">{{ $t('投屏操控') }}</span>
-      <span v-if="meta" class="sv-meta">{{ meta.width }}×{{ meta.height }}</span>
-      <span v-if="running" class="sv-fps">{{ fps }} fps · {{ packetKb }} KB/s</span>
-      <a-tooltip v-if="running" :title="$t('重新连接')">
-        <ReloadOutlined class="sv-icon" @click="stop().then(start)" />
+      <span
+        v-if="meta"
+        class="sv-meta"
+      >
+        {{ meta.width }}×{{ meta.height }}
+      </span>
+      <span
+        v-if="running"
+        class="sv-fps"
+      >
+        {{ fps }} fps · {{ packetKb }} KB/s
+      </span>
+      <a-tooltip
+        v-if="running"
+        :title="$t('重新连接')"
+      >
+        <ReloadOutlined
+          class="sv-icon"
+          @click="stop().then(start)"
+        />
       </a-tooltip>
-      <a-tooltip v-else-if="!starting && !errorText" :title="$t('开始投屏')">
-        <PlayCircleOutlined class="sv-icon" @click="start" />
+      <a-tooltip
+        v-else-if="!starting && !errorText"
+        :title="$t('开始投屏')"
+      >
+        <PlayCircleOutlined
+          class="sv-icon"
+          @click="start"
+        />
       </a-tooltip>
       <!-- 停止：只停投屏，面板留在原位，回到待机状态 -->
-      <a-tooltip v-if="running || starting" :title="$t('停止投屏')">
-        <StopOutlined class="sv-icon sv-icon-stop" @click="stop()" />
+      <a-tooltip
+        v-if="running || starting"
+        :title="$t('停止投屏')"
+      >
+        <StopOutlined
+          class="sv-icon sv-icon-stop"
+          @click="stop()"
+        />
       </a-tooltip>
     </div>
 
     <div class="sv-body">
-      <div v-if="starting" class="sv-tip">
+      <div
+        v-if="starting"
+        class="sv-tip"
+      >
         <LoadingOutlined spin />
         {{ $t('正在启动投屏…') }}
       </div>
-      <div v-else-if="errorText" class="sv-tip sv-tip-error">
+      <div
+        v-else-if="errorText"
+        class="sv-tip sv-tip-error"
+      >
         <div>{{ errorText }}</div>
-        <a-button size="small" type="primary" @click="start">
+        <a-button
+          size="small"
+          type="primary"
+          @click="start"
+        >
           <PlayCircleOutlined />
           {{ $t('重试') }}
         </a-button>
       </div>
       <!-- 待机：面板在，但还没开始投 -->
-      <div v-else-if="!running" class="sv-tip sv-idle">
+      <div
+        v-else-if="!running"
+        class="sv-tip sv-idle"
+      >
         <DesktopOutlined class="sv-idle-icon" />
         <div class="sv-idle-title">{{ $t('还没开始投屏') }}</div>
-        <a-button type="primary" @click="start">
+        <a-button
+          type="primary"
+          @click="start"
+        >
           <PlayCircleOutlined />
           {{ $t('开始投屏') }}
         </a-button>
@@ -605,18 +695,35 @@ defineExpose({ stop, start });
         @keydown="onKeyDown"
         @contextmenu.prevent
       />
-      <div v-if="running && !meta" class="sv-tip">{{ $t('等待画面…') }}</div>
+      <div
+        v-if="running && !meta"
+        class="sv-tip"
+      >
+        {{ $t('等待画面…') }}
+      </div>
 
       <!-- 息屏时投出来是全黑的，给个明确的解释和按钮 -->
-      <div v-if="running && meta && screenAwake === false" class="sv-black">
-        <div class="sv-black-text">{{ $t('手机屏幕是黑的（息屏了），投出来就是全黑') }}</div>
-        <a-button size="small" type="primary" @click="wakeScreen">
+      <div
+        v-if="running && meta && screenAwake === false"
+        class="sv-black"
+      >
+        <div class="sv-black-text">
+          {{ $t('手机屏幕是黑的（息屏了），投出来就是全黑') }}
+        </div>
+        <a-button
+          size="small"
+          type="primary"
+          @click="wakeScreen"
+        >
           {{ $t('唤醒屏幕') }}
         </a-button>
       </div>
     </div>
 
-    <div v-if="running" class="sv-foot">
+    <div
+      v-if="running"
+      class="sv-foot"
+    >
       {{ $t('点一下=轻触，拖动=滑动，滚轮=滚动，方向键/回车可用') }}
     </div>
   </div>
