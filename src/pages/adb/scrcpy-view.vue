@@ -50,6 +50,8 @@ let lastPoint = { x: 0, y: 0 };
 let sentPoint = { x: 0, y: 0 };
 /** 鼠标当前的目标位置。mousemove 只更新它，真正发出去的是 sampleTick 重采样出来的点 */
 let targetPoint = { x: 0, y: 0 };
+/** 按下时的位置（整段拖动的起点，用来判断拖动方向） */
+let dragStart = { x: 0, y: 0 };
 /** 鼠标自己的速度（视频坐标 / 毫秒），由最近两个 mousemove 算出来 */
 let mouseSpeed = 0;
 /** 最后一次 mousemove 的时间与位置（算速度用，performance 时间戳） */
@@ -78,6 +80,13 @@ let lastMoveSentAt = 0;
 const SAMPLE_MS = 7;
 /** 每个采样点至少朝目标推进「鼠标速度 × SAMPLE_MS × 这个系数」 */
 const MIN_STEP_FACTOR = 1.2;
+/**
+ * 已经停住多久（没再发过 MOVE）就算「停下再松手」。
+ * 这种情况下桌面会认为速度为 0，需要补一个「还在动」的采样（见 releaseTouch）。
+ */
+const STALE_MS = 40;
+/** 补的那个采样至少走这么远（视频像素），保证速度足够被桌面当成甩动 */
+const FLING_ASSIST_MIN_PX = 20;
 
 /** 画布坐标 → 视频坐标（注入触摸要用视频坐标系） */
 function toVideo(e: MouseEvent) {
@@ -262,6 +271,7 @@ function onMouseDown(e: MouseEvent) {
   lastPoint = { x, y };
   sentPoint = { x, y };
   targetPoint = { x, y };
+  dragStart = { x, y };
   mouseSpeed = 0;
   lastMoveEvent = { t: performance.now(), x, y };
   startSampling();
@@ -377,12 +387,73 @@ function onMouseMove(e: MouseEvent) {
  *
  * 所以只在**位置真的变了**的时候才补。
  */
+/**
+ * 松手。
+ *
+ * 手机桌面（EMUI）松手时**只看速度**：拖动本身会让页面跟手，但最终「翻页还是弹回」
+ * 取决于松手瞬间的速度。鼠标用户是「拖到位 → 停一下 → 松手」，停顿时速度已经归零，
+ * 所以必然弹回 —— 跟拖了多远无关。（用户实测的旁证：拖到一半按一下右键再松手
+ * 就不会弹回 —— 因为那等于在「还在动」的时候松手。）
+ *
+ * 所以「停住之后再松手」时，补一次「手指还在朝前动」的采样：
+ *     MOVE(松手位置) → 8ms → UP(再往前一步的位置)
+ * 让最后一对采样带着真实位移和速度，桌面才会当成甩动。
+ *
+ * 两点很关键：
+ * 1). 最后一对采样必须是「新」的（间隔 8ms 左右）—— 手机侧算速度只回看 100ms，
+ *     隔了 150ms 的采样对会被直接忽略。
+ * 2). 绝不能补「和上一条完全相同位置」的样本 —— 那会把速度算成 0，反而弹回（见 37ab7d1）。
+ */
 function releaseTouch(x: number, y: number) {
   if (!pressed) return;
   pressed = false;
   stopSampling();
+  const canvas = canvasRef.value;
+  const vw = canvas?.width || meta.value?.width || 1;
+  const vh = canvas?.height || meta.value?.height || 1;
   const moved = x !== sentPoint.x || y !== sentPoint.y;
-  if (moved && Date.now() - lastMoveSentAt > 32) {
+  const stale = Date.now() - lastMoveSentAt > STALE_MS;
+  const dragDist = Math.hypot(x - dragStart.x, y - dragStart.y);
+  // 真正的「拖动」才补；轻触照旧（别把点击弄坏）
+  const isDrag = dragDist > vw * 0.05;
+
+  if (isDrag && stale) {
+    // 方向取整段拖动的方向：比用最后一个样本稳（鼠标手抖不会把方向带偏）
+    const dx = x - dragStart.x;
+    const dy = y - dragStart.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    const step = Math.max(
+      FLING_ASSIST_MIN_PX,
+      mouseSpeed * SAMPLE_MS * MIN_STEP_FACTOR,
+    );
+    const aheadX = x + ux * step;
+    const aheadY = y + uy * step;
+    if (aheadX >= 0 && aheadX <= vw && aheadY >= 0 && aheadY <= vh) {
+      // 先把手指放到松手位置，再往前一步抬起（最后一对采样 = 朝前的一步）
+      api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
+      setTimeout(() => {
+        api.scrcpyTouch({ action: 'up', x: aheadX, y: aheadY })
+          .then(reportTouchFail)
+          .catch(() => {});
+      }, SAMPLE_MS);
+    } else {
+      // 已经到屏幕边缘，没法再往前 → 先往回退一步，再在松手位置抬起
+      // （这样最后一对采样依然是朝前的）
+      const backX = Math.max(0, Math.min(vw, x - ux * step));
+      const backY = Math.max(0, Math.min(vh, y - uy * step));
+      api.scrcpyTouch({ action: 'move', x: backX, y: backY })
+        .then(reportTouchFail)
+        .catch(() => {});
+      setTimeout(() => {
+        api.scrcpyTouch({ action: 'up', x, y }).then(reportTouchFail).catch(() => {});
+      }, SAMPLE_MS);
+    }
+    return;
+  }
+
+  if (moved && !stale) {
     api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
   }
   api.scrcpyTouch({ action: 'up', x, y }).then(reportTouchFail).catch(() => {});
