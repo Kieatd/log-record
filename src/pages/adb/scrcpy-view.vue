@@ -46,6 +46,8 @@ let pressed = false;
 let pressWatchdog: ReturnType<typeof setTimeout> | null = null;
 /** 最后一次已知的手指位置：补发 UP 时要用它，合成事件里没有坐标 */
 let lastPoint = { x: 0, y: 0 };
+/** 最后一次真正发出去的位置：用来判断松手时要不要补 MOVE */
+let sentPoint = { x: 0, y: 0 };
 /** 按着超过这么久没有任何移动，就强制松开（防止松手事件丢了手指一直按着） */
 const PRESS_WATCHDOG_MS = 8000;
 let lastMoveSentAt = 0;
@@ -229,6 +231,7 @@ function onMouseDown(e: MouseEvent) {
   armWatchdog();
   const { x, y } = toVideo(e);
   lastPoint = { x, y };
+  sentPoint = { x, y };
   api.scrcpyTouch({ action: 'down', x, y }).then(reportTouchFail).catch(() => {});
 }
 
@@ -280,16 +283,28 @@ function onMouseMove(e: MouseEvent) {
   lastMoveSentAt = now;
   const { x, y } = toVideo(e);
   lastPoint = { x, y };
+  sentPoint = { x, y };
   api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
 }
 
+/**
+ * 松手。
+ *
+ * 注意：绝对不能在位置没变的时候补 MOVE。
+ * 之前这里写的是「只要距上次发送超过 32ms 就补一个终点 MOVE」，
+ * 结果松手瞬间常常补出一条**和上一条完全相同位置**的 MOVE ——
+ * 手机的 VelocityTracker 把这个"原地不动"的样本当成最后一段位移，
+ * 算出来的速度≈0，于是没有甩力，桌面松手就吸附回原来那一页。
+ * （现象就是：页面跟着手指拖得好好的，一松手弹回去。）
+ * 实测日志：02.553 move x=3 → 02.627 move x=3 → up，后两条坐标一模一样。
+ *
+ * 所以只在**位置真的变了**的时候才补。
+ */
 function releaseTouch(x: number, y: number) {
   if (!pressed) return;
   pressed = false;
-  // 先补一个「最后位置」的 MOVE 再 UP：
-  // mousemove 是 30/s 节流的，如果最后 32ms 里鼠标窜了一段，
-  // 这段位移手机是不知道的 —— 补上，滑动的速度和终点才对
-  if (Date.now() - lastMoveSentAt > 32) {
+  const moved = x !== sentPoint.x || y !== sentPoint.y;
+  if (moved && Date.now() - lastMoveSentAt > 32) {
     api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
   }
   api.scrcpyTouch({ action: 'up', x, y }).then(reportTouchFail).catch(() => {});
