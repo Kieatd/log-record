@@ -228,6 +228,8 @@ export default {
   '正在连接…': 'Connecting…',
   '还没开始投屏': 'Mirror is not running',
   '开始投屏': 'Start mirroring',
+
+  '投屏没在跑（可能被重启过），请点「开始投屏」重新连': 'Mirroring is not running (the app may have restarted). Click "Start mirroring" again',
   '投屏会在手机上启动一个服务，需要时再开': 'Mirroring starts a service on the phone — start it only when needed',
   '重试': 'Retry',
   '停止投屏': 'Stop mirroring',

@@ -192,6 +192,24 @@ async function wakeScreen() {
 
 /* ---------------- 鼠标操作 → 触摸注入 ---------------- */
 
+/**
+ * 触摸失败时要说出来。
+ *
+ * 原来这些调用是「发出去就不管了」：投屏会话已经断了（比如应用重启过、
+ * 或者手机上服务被杀），injectTouch 会返回「投屏没在跑」，但界面完全没反应 ——
+ * 画布还留着最后一帧，看起来像活的，用户就会觉得「拖动没反应」。
+ * 这里把失败报出来，3 秒最多提示一次，别刷屏。
+ */
+let lastTouchFailAt = 0;
+function reportTouchFail(res: { ok: boolean; message?: string }) {
+  if (res.ok) return;
+  const now = Date.now();
+  if (now - lastTouchFailAt < 3000) return;
+  lastTouchFailAt = now;
+  console.warn('投屏触摸失败: ', res.message);
+  message.warning(i18n.t('投屏没在跑（可能被重启过），请点「开始投屏」重新连'));
+}
+
 function onMouseDown(e: MouseEvent) {
   if (!running.value) return;
   e.preventDefault();
@@ -211,7 +229,7 @@ function onMouseDown(e: MouseEvent) {
   armWatchdog();
   const { x, y } = toVideo(e);
   lastPoint = { x, y };
-  api.scrcpyTouch({ action: 'down', x, y });
+  api.scrcpyTouch({ action: 'down', x, y }).then(reportTouchFail).catch(() => {});
 }
 
 function detachMouse() {
@@ -262,7 +280,7 @@ function onMouseMove(e: MouseEvent) {
   lastMoveSentAt = now;
   const { x, y } = toVideo(e);
   lastPoint = { x, y };
-  api.scrcpyTouch({ action: 'move', x, y });
+  api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
 }
 
 function releaseTouch(x: number, y: number) {
@@ -272,9 +290,9 @@ function releaseTouch(x: number, y: number) {
   // mousemove 是 30/s 节流的，如果最后 32ms 里鼠标窜了一段，
   // 这段位移手机是不知道的 —— 补上，滑动的速度和终点才对
   if (Date.now() - lastMoveSentAt > 32) {
-    api.scrcpyTouch({ action: 'move', x, y });
+    api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
   }
-  api.scrcpyTouch({ action: 'up', x, y });
+  api.scrcpyTouch({ action: 'up', x, y }).then(reportTouchFail).catch(() => {});
 }
 
 function onMouseUp(e: MouseEvent) {
