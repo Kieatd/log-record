@@ -79,6 +79,10 @@ const createWindow = () => {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       spellcheck: false,
+      // 窗口被别的窗口挡住 / 最小化时，Electron 默认会把渲染层的定时器降到 1 秒一次。
+      // 投屏的拖动采样是按 7ms 定时器补点的（见 scrcpy-view.vue 的 sampleTick），
+      // 被节流之后采样点会变成每秒一个，手机上直接算不出滑动 —— 必须关掉。
+      backgroundThrottling: false,
     },
     transparent: true,
     icon: path.join(__dirname, '/assets/logo.png'),
@@ -845,7 +849,6 @@ const createWindow = () => {
   });
 
   Menu.setApplicationMenu(null);
-
 
   if (maximized) {
     mainWindow.maximize();

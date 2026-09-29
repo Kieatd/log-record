@@ -48,9 +48,36 @@ let pressWatchdog: ReturnType<typeof setTimeout> | null = null;
 let lastPoint = { x: 0, y: 0 };
 /** 最后一次真正发出去的位置：用来判断松手时要不要补 MOVE */
 let sentPoint = { x: 0, y: 0 };
+/** 鼠标当前的目标位置。mousemove 只更新它，真正发出去的是 sampleTick 重采样出来的点 */
+let targetPoint = { x: 0, y: 0 };
+/** 鼠标自己的速度（视频坐标 / 毫秒），由最近两个 mousemove 算出来 */
+let mouseSpeed = 0;
+/** 最后一次 mousemove 的时间与位置（算速度用，performance 时间戳） */
+let lastMoveEvent = { t: 0, x: 0, y: 0 };
+/** 重采样定时器（按下时开，松手时停） */
+let sampleTimer: ReturnType<typeof setInterval> | null = null;
 /** 按着超过这么久没有任何移动，就强制松开（防止松手事件丢了手指一直按着） */
 const PRESS_WATCHDOG_MS = 8000;
 let lastMoveSentAt = 0;
+
+/**
+ * 重采样间隔（毫秒）。
+ *
+ * 为什么不能直接把 mousemove 转发给手机：
+ * 桌面翻页靠 VelocityTracker 算「甩」的速度，采样太稀就算不出来，松手会弹回原页。
+ * 实测（同一条路径、每个形状各跑 3~5 遍，HONOR BND-AL10 / Android 7 / EMUI）：
+ *   4 个点、间隔 35ms（真实鼠标拖动原来被 32ms 抽稀后的样子）→ 0/3 次能翻
+ *   3 个点、间隔 35ms                                  → 0/3 次能翻
+ *   1 个点、间隔 140ms                                 → 3/3 次能翻
+ *   20 个点、间隔 7ms                                  → 3/3 次能翻
+ *   40 个点、间隔 3.5ms                                → 3/3 次能翻
+ *   Android 原生 input swipe（约 5ms 一个点）            → 每次都能翻
+ * 结论：间隔 30~40ms 的稀采样几乎必失败，密到 7ms 左右就必成功。
+ * 原来那套「32ms 以内直接丢掉」的抽稀正好落在必失败的区间里。
+ */
+const SAMPLE_MS = 7;
+/** 每个采样点至少朝目标推进「鼠标速度 × SAMPLE_MS × 这个系数」 */
+const MIN_STEP_FACTOR = 1.2;
 
 /** 画布坐标 → 视频坐标（注入触摸要用视频坐标系） */
 function toVideo(e: MouseEvent) {
@@ -144,6 +171,8 @@ async function start() {
 async function stop() {
   errorText.value = '';
   meta.value = null;
+  stopSampling();
+  pressed = false;
   if (statTimer) {
     clearInterval(statTimer);
     statTimer = null;
@@ -232,7 +261,49 @@ function onMouseDown(e: MouseEvent) {
   const { x, y } = toVideo(e);
   lastPoint = { x, y };
   sentPoint = { x, y };
+  targetPoint = { x, y };
+  mouseSpeed = 0;
+  lastMoveEvent = { t: performance.now(), x, y };
+  startSampling();
   api.scrcpyTouch({ action: 'down', x, y }).then(reportTouchFail).catch(() => {});
+}
+
+function startSampling() {
+  if (sampleTimer !== null) return;
+  sampleTimer = setInterval(sampleTick, SAMPLE_MS);
+}
+
+function stopSampling() {
+  if (sampleTimer === null) return;
+  clearInterval(sampleTimer);
+  sampleTimer = null;
+}
+
+/**
+ * 一个采样点：把上次真正发出去的位置朝鼠标目标推进。
+ *
+ * 两件事很重要：
+ * 1). 每一步至少走「鼠标速度 × SAMPLE_MS × MIN_STEP_FACTOR」—— 不能只是逐步逼近目标。
+ *     只逼近的话，尾巴会是一串越来越小的位移（实测这种「减速尾巴」 5 次全失败，
+ *     一个都没翻）；保留住尾巴上的速度和位移，桌面才算得出甩力。
+ * 2). 位置没变就不发 —— 绝不能发「原地不动」的样本，那会把速度算成 0。
+ */
+function sampleTick() {
+  if (!pressed) {
+    stopSampling();
+    return;
+  }
+  const dx = targetPoint.x - sentPoint.x;
+  const dy = targetPoint.y - sentPoint.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1) return;
+  const floorStep = mouseSpeed * SAMPLE_MS * MIN_STEP_FACTOR;
+  const step = Math.min(dist, Math.max(dist * 0.5, floorStep));
+  const x = sentPoint.x + (dx / dist) * step;
+  const y = sentPoint.y + (dy / dist) * step;
+  sentPoint = { x, y };
+  lastMoveSentAt = Date.now();
+  api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
 }
 
 function detachMouse() {
@@ -240,6 +311,7 @@ function detachMouse() {
   window.removeEventListener('mouseup', onMouseUp);
   window.removeEventListener('blur', onMouseUpForced);
   document.removeEventListener('visibilitychange', onVisibilityChange);
+  stopSampling();
   if (pressWatchdog !== null) {
     clearTimeout(pressWatchdog);
     pressWatchdog = null;
@@ -277,14 +349,19 @@ function armWatchdog() {
 function onMouseMove(e: MouseEvent) {
   if (!running.value || !pressed) return;
   armWatchdog();
-  // 别把每个 mousemove 都发过去，30/s 够了
-  const now = Date.now();
-  if (now - lastMoveSentAt < 32) return;
-  lastMoveSentAt = now;
+  // 这里只记录目标位置（不直接发）：真正发给手机的是 sampleTick 按 SAMPLE_MS 重采样出来的点
   const { x, y } = toVideo(e);
+  const now = performance.now();
+  const dt = now - lastMoveEvent.t;
+  if (dt > 0) {
+    // 浏览器事件的 timeStamp 和 performance.now() 同一个时基，可以直接相减
+    const v = Math.hypot(x - lastMoveEvent.x, y - lastMoveEvent.y) / dt;
+    // 平滑一下，别让单个抖动样本把速度带偏
+    mouseSpeed = mouseSpeed === 0 ? v : mouseSpeed * 0.5 + v * 0.5;
+    lastMoveEvent = { t: now, x, y };
+  }
   lastPoint = { x, y };
-  sentPoint = { x, y };
-  api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
+  targetPoint = { x, y };
 }
 
 /**
@@ -303,6 +380,7 @@ function onMouseMove(e: MouseEvent) {
 function releaseTouch(x: number, y: number) {
   if (!pressed) return;
   pressed = false;
+  stopSampling();
   const moved = x !== sentPoint.x || y !== sentPoint.y;
   if (moved && Date.now() - lastMoveSentAt > 32) {
     api.scrcpyTouch({ action: 'move', x, y }).then(reportTouchFail).catch(() => {});
