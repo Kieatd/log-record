@@ -81,7 +81,7 @@ const SAMPLE_MS = 7;
 /** 每个采样点至少朝目标推进「鼠标速度 × SAMPLE_MS × 这个系数」 */
 const MIN_STEP_FACTOR = 1.2;
 /** 补的那个采样至少走这么远（视频像素），保证速度足够被桌面当成甩动 */
-const FLING_ASSIST_MIN_PX = 20;
+const FLING_ASSIST_MIN_PX = 40;
 /**
  * 松手时「终点 MOVE」和「UP」之间至少隔这么久。
  *
@@ -103,12 +103,6 @@ const MIN_SEND_GAP_MS = 5;
  */
 let sendChain: Promise<void> = Promise.resolve();
 let lastSendAt = 0;
-
-/** 手机真实屏幕分辨率（默认 1080x2160，拿到 adb 结果就覆盖） */
-let deviceSize = { w: 1080, h: 2160 };
-/** 当前前台应用包名 + 上次刷新时间（兜底翻页用） */
-let foregroundApp = '';
-let foregroundAt = 0;
 
 function sendTouch(payload: {
   action: 'down' | 'up' | 'move';
@@ -211,23 +205,6 @@ async function start() {
     }
     running.value = true;
     emit('running', true);
-    // 拿一次手机真实分辨率（兜底翻页要把视频坐标换算成屏幕坐标）
-    api
-      .adbScreenSize(props.serial || undefined)
-      .then((s: string) => {
-        const m = /(\d+)x(\d+)/.exec(s || '');
-        if (m) deviceSize = { w: Number(m[1]), h: Number(m[2]) };
-      })
-      .catch(() => {});
-    // 预热「当前前台应用」：兜底翻页要用它判断是不是桌面，
-    // 不预热的话第一次拖动会因为还没取到而静默不生效
-    foregroundAt = Date.now();
-    api
-      .adbForeground(props.serial || undefined)
-      .then((pkg: string) => {
-        foregroundApp = pkg || '';
-      })
-      .catch(() => {});
     statTimer = setInterval(() => {
       fps.value = frameCount;
       packetKb.value = Math.round(byteCount / 1024);
@@ -342,16 +319,6 @@ function onMouseDown(e: MouseEvent) {
   lastMoveEvent = { t: performance.now(), x, y };
   startSampling();
   sendTouch({ action: 'down', x, y });
-  // 兜底翻页要知道前台是不是桌面：拖动开始时顺手刷新（异步，不挡拖动）
-  if (Date.now() - foregroundAt > 3000) {
-    foregroundAt = Date.now();
-    api
-      .adbForeground(props.serial || undefined)
-      .then((pkg: string) => {
-        foregroundApp = pkg || '';
-      })
-      .catch(() => {});
-  }
 }
 
 function startSampling() {
@@ -494,48 +461,6 @@ function onMouseMove(e: MouseEvent) {
  * 生成事件，时间戳天然连续，桌面一定认。
  * 只在「桌面（launcher） + 大范围水平拖动」时补，不影响 App 内部的拖动。
  */
-function flingFallback(
-  x: number,
-  y: number,
-  dx: number,
-  dy: number,
-  vw: number,
-) {
-  if (!foregroundApp || !/launcher/i.test(foregroundApp)) return;
-  const dist = Math.hypot(dx, dy);
-  if (dist < vw * 0.25) return;
-  if (Math.abs(dx) <= 3 * Math.abs(dy)) return;
-  const vh = canvasRef.value?.height || meta.value?.height || 1;
-  const dir = dx >= 0 ? 1 : -1;
-  const marginX = Math.round(deviceSize.w * 0.1);
-  const len = Math.round(deviceSize.w * 0.3);
-  const sy = Math.max(
-    Math.round(deviceSize.h * 0.25),
-    Math.min(
-      Math.round(deviceSize.h * 0.75),
-      Math.round((y / vh) * deviceSize.h),
-    ),
-  );
-  const clampX = (v: number) =>
-    Math.max(marginX, Math.min(deviceSize.w - marginX, Math.round(v)));
-  // 终点就放在鼠标松手的位置（拖到左边缘就是一次自然的左滑），起点往反方向退 len
-  const x2 = clampX((x / vw) * deviceSize.w);
-  const x1 = clampX(x2 - dir * len);
-  // 等我们自己的 UP 发完（12ms）再补，免得两个手势撞在一起
-  setTimeout(() => {
-    api
-      .adbLocalSwipe({
-        x1,
-        y1: sy,
-        x2,
-        y2: sy,
-        duration: 160,
-        serial: props.serial || undefined,
-      })
-      .catch(() => {});
-  }, 80);
-}
-
 function releaseTouch(x: number, y: number) {
   if (!pressed) return;
   pressed = false;
@@ -548,8 +473,10 @@ function releaseTouch(x: number, y: number) {
   // 真正的「拖动」才补；轻触照旧（别把点击弄坏）
   const isDrag = dragDist > vw * 0.05;
 
+  const dxAll = x - dragStart.x;
+  const dyAll = y - dragStart.y;
+
   if (isDrag) {
-    flingFallback(x, y, x - dragStart.x, y - dragStart.y, vw);
     // 方向取整段拖动的方向：比用最后一个样本稳（鼠标手抖不会把方向带偏）
     const dx = x - dragStart.x;
     const dy = y - dragStart.y;
