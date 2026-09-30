@@ -1440,7 +1440,7 @@ function deviceSubtitle(d: AdbDevice) {
       <div class="tile-grid">
         <!-- 拖 APK 安装 -->
         <div
-          class="tile"
+          class="tile tile-column"
           :class="{
             'tile-drop': dragging,
             'tile-disabled': !ready || installing,
@@ -1499,7 +1499,7 @@ function deviceSubtitle(d: AdbDevice) {
           </div>
 
           <!-- 右：配置 -->
-          <div class="tile-side">
+          <div class="tile-foot">
             <!-- 包一层 guard：antd 的 checkbox 根元素是 label，会往内部 input
                再派发一次 click，事件照样冒泡到磁贴，光在 checkbox 上写
                @click.stop 拦不住 -->
@@ -1543,7 +1543,7 @@ function deviceSubtitle(d: AdbDevice) {
 
         <!-- 卸载应用 -->
         <div
-          class="tile"
+          class="tile tile-column"
           :class="{ 'tile-disabled': !ready }"
         >
           <div
@@ -1554,7 +1554,7 @@ function deviceSubtitle(d: AdbDevice) {
             <div class="tile-title">{{ $t('卸载应用') }}</div>
             <div class="tile-desc">{{ $t('查看手机上装的应用并卸载') }}</div>
           </div>
-          <div class="tile-side">
+          <div class="tile-foot">
             <span
               class="tile-guard"
               @click.stop
@@ -1631,7 +1631,7 @@ function deviceSubtitle(d: AdbDevice) {
 
         <!-- 屏幕常亮 -->
         <div
-          class="tile"
+          class="tile tile-column"
           :class="{ 'tile-disabled': !ready || busyStayOn }"
         >
           <div
@@ -1661,7 +1661,7 @@ function deviceSubtitle(d: AdbDevice) {
               />
             </span>
           </div>
-          <div class="tile-side">
+          <div class="tile-foot">
             <span
               class="tile-guard"
               @click.stop
@@ -1830,7 +1830,7 @@ function deviceSubtitle(d: AdbDevice) {
 
         <!-- 传文件到手机 -->
         <div
-          class="tile"
+          class="tile tile-column"
           :class="{
             'tile-drop': pushDragging,
             'tile-disabled': !ready || pushing,
@@ -1889,7 +1889,7 @@ function deviceSubtitle(d: AdbDevice) {
           </div>
 
           <!-- 右：配置（两个入口一直显示） -->
-          <div class="tile-side">
+          <div class="tile-foot">
             <span
               class="tile-guard"
               @click.stop
@@ -2658,6 +2658,36 @@ function deviceSubtitle(d: AdbDevice) {
 .tile-main-flat:hover {
   background-color: transparent;
 }
+/* 有些磁贴的配置放不进 104px 的右栏（文字会换行）：
+   就改成"上面主区 + 下面一整行"。每个磁贴自己决定，不强求统一。 */
+.tile-column {
+  flex-direction: column;
+}
+.tile-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-top: 1px solid #f0f0f0;
+  background-color: #fafafa;
+}
+.tile-foot .ant-checkbox-wrapper {
+  white-space: nowrap;
+}
+/* foot 里的入口改成横排（图标+文字），比竖排省宽度，长一点的文字也不会换行 */
+.tile-foot .tile-side-entry {
+  flex-direction: row;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+.tile-foot .tile-side-divider {
+  width: 1px;
+  height: 16px;
+}
+
 /* 右：配置区。放这个磁贴的设置（开关/按钮/设置入口），宽度所有磁贴一致 */
 .tile-side {
   width: 104px;
