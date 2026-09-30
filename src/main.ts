@@ -10,7 +10,7 @@ import {
   screen,
 } from 'electron';
 import fs from 'fs';
-import { fillDebugUrl, openFolderOnPhone } from './utils/uiauto';
+import { openFolderOnPhone } from './utils/uiauto';
 import { startMonkey, stopMonkey } from './utils/monkey';
 import { isStressRunning, startStress, stopStress } from './utils/stress';
 import { cancelPush, pushFiles } from './utils/push';
@@ -446,27 +446,6 @@ const createWindow = () => {
   );
 
   /* ---------------- 一键填调试地址（UI 自动化） ---------------- */
-
-  ipcMain.handle(
-    'uiauto:fillDebugUrl',
-    async (
-      _,
-      payload: {
-        ip: string;
-        serial?: string;
-        buttonText?: string;
-        screenKey?: string;
-        force?: boolean;
-        packageName?: string;
-        navSteps?: string[];
-      },
-    ) => {
-      const info = currentAdb();
-      if (!info.found)
-        return { ok: false, message: info.error || '没找到 adb', steps: [] };
-      return fillDebugUrl(info.file, payload);
-    },
-  );
 
   ipcMain.handle('adb:installTimes', async (_, serial?: string) => {
     const info = currentAdb();

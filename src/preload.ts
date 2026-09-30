@@ -51,8 +51,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbPick: () => ipcRenderer.invoke('adb:pick'),
   adbSetPath: (adbPath: string) => ipcRenderer.invoke('adb:setPath', adbPath),
   adbDevices: () => ipcRenderer.invoke('adb:devices'),
-  adbGetInstallConfirm: (serial?: string) => ipcRenderer.invoke('adb:getInstallConfirm', serial),
-  adbSetInstallConfirm: (on: boolean, serial?: string) => ipcRenderer.invoke('adb:setInstallConfirm', { on, serial }),
+  adbGetInstallConfirm: (serial?: string) =>
+    ipcRenderer.invoke('adb:getInstallConfirm', serial),
+  adbSetInstallConfirm: (on: boolean, serial?: string) =>
+    ipcRenderer.invoke('adb:setInstallConfirm', { on, serial }),
   adbInstall: (
     apkPath: string,
     serial?: string,
@@ -103,8 +105,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /* ---------------- 快速传文件 ---------------- */
   pushPick: () => ipcRenderer.invoke('push:pick'),
-  pushFiles: (paths: string[], dest?: string, serial?: string, taskId?: string) =>
-    ipcRenderer.invoke('push:files', { paths, dest, serial, taskId }),
+  pushFiles: (
+    paths: string[],
+    dest?: string,
+    serial?: string,
+    taskId?: string,
+  ) => ipcRenderer.invoke('push:files', { paths, dest, serial, taskId }),
   pushCancel: (taskId: string) => ipcRenderer.invoke('push:cancel', taskId),
   adbOpenFolder: (folder: string, serial?: string) =>
     ipcRenderer.invoke('adb:openFolder', { folder, serial }),
@@ -138,31 +144,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('scrcpy:meta', (_e, v) => callback(v)),
   onScrcpyPacket: (callback: any) =>
     ipcRenderer.on('scrcpy:packet', (_e, v) => callback(v)),
-  onScrcpyLog: (callback: any) => ipcRenderer.on('scrcpy:log', (_e, v) => callback(v)),
+  onScrcpyLog: (callback: any) =>
+    ipcRenderer.on('scrcpy:log', (_e, v) => callback(v)),
   onScrcpyError: (callback: any) =>
     ipcRenderer.on('scrcpy:error', (_e, v) => callback(v)),
   onScrcpyClosed: (callback: any) =>
     ipcRenderer.on('scrcpy:closed', (_e, v) => callback(v)),
 
-  adbInstallTimes: (serial?: string) => ipcRenderer.invoke('adb:installTimes', serial),
-  uiautoFillDebugUrl: (
-    ip: string,
-    serial?: string,
-    buttonText?: string,
-    screenKey?: string,
-    force?: boolean,
-    packageName?: string,
-    navSteps?: string[],
-  ) =>
-    ipcRenderer.invoke('uiauto:fillDebugUrl', {
-      ip,
-      serial,
-      buttonText,
-      screenKey,
-      force,
-      packageName,
-      navSteps,
-    }),
+  adbInstallTimes: (serial?: string) =>
+    ipcRenderer.invoke('adb:installTimes', serial),
   appRestart: (packageName: string, serial?: string) =>
     ipcRenderer.invoke('app:restart', { packageName, serial }),
   adbAppLabels: (
@@ -175,7 +165,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('adb:cancelInstall', taskId),
   onAdbProgress: (callback: any) =>
     ipcRenderer.on('adb:progress', (_event, value) => callback(value)),
-  adbScreencap: (serial?: string) => ipcRenderer.invoke('adb:screencap', serial),
+  adbScreencap: (serial?: string) =>
+    ipcRenderer.invoke('adb:screencap', serial),
   shotsCount: () => ipcRenderer.invoke('shots:count'),
   shotsList: () => ipcRenderer.invoke('shots:list'),
   shotsLatest: () => ipcRenderer.invoke('shots:latest'),
@@ -184,7 +175,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   shotsDelete: (name: string) => ipcRenderer.invoke('shots:delete', name),
   shotsOpenFolder: () => ipcRenderer.invoke('shots:openFolder'),
   adbWakeup: (serial?: string) => ipcRenderer.invoke('adb:wakeup', serial),
-  adbStayAwake: (serial?: string) => ipcRenderer.invoke('adb:stayAwake', serial),
+  adbStayAwake: (serial?: string) =>
+    ipcRenderer.invoke('adb:stayAwake', serial),
   adbSetStayAwake: (on: boolean, serial?: string) =>
     ipcRenderer.invoke('adb:setStayAwake', { on, serial }),
   adbSaveImage: (dataUrl: string, defaultName: string) =>
@@ -201,8 +193,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     duration: number;
     serial?: string;
   }) => ipcRenderer.invoke('adb:localSwipe', payload),
-  adbForeground: (serial?: string) => ipcRenderer.invoke('adb:foreground', serial),
-  adbScreenSize: (serial?: string) => ipcRenderer.invoke('adb:screenSize', serial),
+  adbForeground: (serial?: string) =>
+    ipcRenderer.invoke('adb:foreground', serial),
+  adbScreenSize: (serial?: string) =>
+    ipcRenderer.invoke('adb:screenSize', serial),
   adbShell: (command: string, serial?: string) =>
     ipcRenderer.invoke('adb:shell', { command, serial }),
   onAdbOutput: (callback: any) =>

@@ -84,7 +84,9 @@ const shooting = ref(false);
 
 /** 截图记录：图片存在 userData/screenshots/，这里只拿缩略图 */
 const shotsOpen = ref(false);
-const shots = ref<{ name: string; size: number; mtime: number; thumb: string }[]>([]);
+const shots = ref<
+  { name: string; size: number; mtime: number; thumb: string }[]
+>([]);
 const shotsLoading = ref(false);
 const shotCount = ref(0);
 /** 磁盘上所有截图的文件名 */
@@ -166,7 +168,9 @@ const autoStayOnDone = new Set<string>();
 
 // 投屏面板常驻在右侧，不提供收起 —— 这就是想要的默认布局
 const mirrorRunning = ref(false);
-const mirrorRef = ref<{ start: () => void; stop: () => Promise<void> } | null>(null);
+const mirrorRef = ref<{ start: () => void; stop: () => Promise<void> } | null>(
+  null,
+);
 
 const stayAwake = ref<StayAwakeState | null>(null);
 const busyStayOn = ref(false);
@@ -209,13 +213,17 @@ async function loadDevices() {
     if (!res.ok) {
       pushLog(res.message, 'err');
     } else if (!devices.value.length) {
-      pushLog(i18n.t('没有检测到设备，检查数据线和手机上的「允许 USB 调试」'), 'err');
+      pushLog(
+        i18n.t('没有检测到设备，检查数据线和手机上的「允许 USB 调试」'),
+        'err',
+      );
     }
     // 自动选中第一台可以用的
     if (!devices.value.some((d) => d.serial === currentSerial.value)) {
-      currentSerial.value = devices.value.find((d) => d.state === 'device')?.serial
-        || devices.value[0]?.serial
-        || '';
+      currentSerial.value =
+        devices.value.find((d) => d.state === 'device')?.serial ||
+        devices.value[0]?.serial ||
+        '';
     }
   } finally {
     loadingDevices.value = false;
@@ -305,7 +313,10 @@ async function applyAutoStayOn() {
   const res = await api.adbSetStayAwake(true, serial);
   if (res.state) stayAwake.value = res.state;
   if (res.ok) {
-    pushLog(`${i18n.t('已自动开启屏幕常亮')}（${res.state?.modes?.join('、') || ''}）`, 'ok');
+    pushLog(
+      `${i18n.t('已自动开启屏幕常亮')}（${res.state?.modes?.join('、') || ''}）`,
+      'ok',
+    );
   }
 }
 
@@ -387,7 +398,10 @@ async function installApk(apkPath: string) {
     return;
   }
   const name = apkPath.split(/[\\/]/).pop() || apkPath;
-  pushLog(`$ adb -s ${currentSerial.value} push ${name} → /data/local/tmp/`, 'info');
+  pushLog(
+    `$ adb -s ${currentSerial.value} push ${name} → /data/local/tmp/`,
+    'info',
+  );
   installTaskId.value = `install-${Date.now()}`;
   installState.value = null;
   installing.value = true;
@@ -633,7 +647,11 @@ async function doUninstall(pkg: string) {
     'info',
   );
   try {
-    const res = await api.adbUninstall(pkg, currentSerial.value, keepData.value);
+    const res = await api.adbUninstall(
+      pkg,
+      currentSerial.value,
+      keepData.value,
+    );
     if (res.raw && !res.ok) pushLog(res.raw, 'err');
     pushLog(res.message, res.ok ? 'ok' : 'err');
     if (res.ok) {
@@ -691,96 +709,8 @@ const pkgOptions = computed(() =>
   })),
 );
 
-/* ---------------- 一键填调试地址 ---------------- */
-
-const fillBusy = ref(false);
-const fillOpen = ref(false);
-/** 本机局域网 IP，标题栏那个；填调试地址要用 */
+/** 本机局域网 IP，标题栏那个 */
 const localIp = ref('');
-const FILL_KEY = 'Log Record$$fillConfig';
-const fillForm = reactive({
-  /** 按钮上的文字，调试页里那个按钮 */
-  buttonText: '设置',
-  /** 填完要重启哪个 App */
-  packageName: '',
-  /** IP 没变时也重填 */
-  force: false,
-  /** 自动走到调试页的导航步骤，逗号分隔 */
-  navSteps: '组件示例,release button 开关',
-  ...(() => {
-    try {
-      return JSON.parse(localStorage.getItem(FILL_KEY) || '{}');
-    } catch {
-      return {};
-    }
-  })(),
-});
-watch(
-  () => ({ ...fillForm }),
-  (v) => localStorage.setItem(FILL_KEY, JSON.stringify(v)),
-  { deep: true },
-);
-
-function openFillSettings() {
-  fillOpen.value = true;
-  if (!pkgList.value.length) loadPackages();
-}
-
-/**
- * 一键：把本机 IP 填进 App 调试页的输入框、点「设置」、再重启 App。
- *
- * 前提：手机上那个调试页已经打开、屏幕是亮的（这两个我们没法代劳）。
- * 走 uiautomator，不改 App 也不需要 root。
- */
-async function fillDebugUrl() {
-  if (!ready.value) {
-    message.warning(i18n.t('先插上线，选中一台设备'));
-    return;
-  }
-  fillBusy.value = true;
-  try {
-    const host = localIp.value || (await api.getIPAddress());
-    localIp.value = host;
-    pushLog(`${i18n.t('正在把')} ${host} ${i18n.t('填进 App 的调试地址')}…`, 'info');
-    const res = await api.uiautoFillDebugUrl(
-      host,
-      currentSerial.value,
-      fillForm.buttonText,
-      `${window.screen.width}x${window.screen.height}`,
-      fillForm.force,
-      fillForm.packageName || undefined,
-      fillForm.navSteps
-        .split(/[,，\n]/)
-        .map((x: string) => x.trim())
-        .filter(Boolean),
-    );
-    for (const step of res.steps || []) pushLog(`  ${step}`, 'info');
-    const cost = res.ms ? `（${(res.ms / 1000).toFixed(1)} 秒${res.cached ? '，走缓存' : ''}）` : '';
-    pushLog(res.message + cost, res.ok ? 'ok' : 'err');
-    // 点完有没有弹提示，是判断「按钮到底有没有被响应」最直接的证据
-    if (res.ok) {
-      if (res.gotToast) message.success(i18n.t('设置成功（App 弹了提示）'));
-      else message.warning(i18n.t('没看到 App 的提示，按钮可能没被响应'));
-    }
-    if (!res.ok) {
-      message.error(res.message);
-      return;
-    }
-    message.success(res.message);
-
-    if (fillForm.packageName) {
-      pushLog(`${i18n.t('重启')} ${fillForm.packageName}…`, 'info');
-      const r = await api.appRestart(fillForm.packageName, currentSerial.value);
-      pushLog(r.message, r.ok ? 'ok' : 'err');
-      if (r.ok) message.success(i18n.t('已重启，电脑上应该能收到了'));
-      else message.warning(r.message);
-    } else {
-      message.info(i18n.t('地址填好了，记得重启 App 才生效'));
-    }
-  } finally {
-    fillBusy.value = false;
-  }
-}
 
 /* ---------------- monkey 压测 ---------------- */
 
@@ -827,7 +757,9 @@ watch(
 
 function monkeyElapsedText() {
   const s = monkeyElapsed.value;
-  return s < 60 ? `${s} ${i18n.t('秒')}` : `${Math.floor(s / 60)} ${i18n.t('分')} ${String(s % 60).padStart(2, '0')} ${i18n.t('秒')}`;
+  return s < 60
+    ? `${s} ${i18n.t('秒')}`
+    : `${Math.floor(s / 60)} ${i18n.t('分')} ${String(s % 60).padStart(2, '0')} ${i18n.t('秒')}`;
 }
 
 async function openMonkeySettings() {
@@ -945,7 +877,9 @@ const pushTaskId = ref('');
 let pushTimer: ReturnType<typeof setInterval> | null = null;
 
 const PUSH_DEST_KEY = 'Log Record$$pushDest';
-const pushDest = ref(localStorage.getItem(PUSH_DEST_KEY) || '/sdcard/Download/');
+const pushDest = ref(
+  localStorage.getItem(PUSH_DEST_KEY) || '/sdcard/Download/',
+);
 const pushDestOpen = ref(false);
 // 无线调试：IP 设置的弹层
 const WIFI_IP_KEY = 'Log Record$$wifiIp';
@@ -958,8 +892,9 @@ const saveWifiIp = () => {
 // 自定义命令：执行后是否清空输入
 const CUSTOM_CLEAR_KEY = 'Log Record$$customClearAfter';
 const customClearAfter = ref(localStorage.getItem(CUSTOM_CLEAR_KEY) !== '0');
-watch(customClearAfter, (v) => localStorage.setItem(CUSTOM_CLEAR_KEY, v ? '1' : '0'));
-
+watch(customClearAfter, (v) =>
+  localStorage.setItem(CUSTOM_CLEAR_KEY, v ? '1' : '0'),
+);
 
 function savePushDest() {
   const v = pushDest.value.trim() || '/sdcard/Download/';
@@ -986,7 +921,10 @@ async function doPush(paths: string[]) {
   pushElapsed.value = 0;
   if (pushTimer) clearInterval(pushTimer);
   pushTimer = setInterval(() => (pushElapsed.value += 1), 1000);
-  pushLog(`${i18n.t('正在传到')} ${pushDest.value}（${paths.length} 项）…`, 'info');
+  pushLog(
+    `${i18n.t('正在传到')} ${pushDest.value}（${paths.length} 项）…`,
+    'info',
+  );
   try {
     const res = await api.pushFiles(
       paths,
@@ -1157,7 +1095,10 @@ async function enableWifi() {
   busyWifi.value = true;
   try {
     const res = await api.adbTcpip(currentSerial.value, 5555);
-    pushLog(res.raw ? `$ adb tcpip 5555\n${res.raw}` : res.message, res.ok ? 'ok' : 'err');
+    pushLog(
+      res.raw ? `$ adb tcpip 5555\n${res.raw}` : res.message,
+      res.ok ? 'ok' : 'err',
+    );
     if (res.ok) {
       // 拔线前先记下手机 IP，方便下一步直接连
       const ipRes = await api.adbShell(
@@ -1183,7 +1124,10 @@ async function connectWifi() {
   busyWifi.value = true;
   try {
     const res = await api.adbConnect(wifiIp.value.trim(), 5555);
-    pushLog(`$ adb connect ${wifiIp.value.trim()}:5555\n${res.raw || res.message}`, res.ok ? 'ok' : 'err');
+    pushLog(
+      `$ adb connect ${wifiIp.value.trim()}:5555\n${res.raw || res.message}`,
+      res.ok ? 'ok' : 'err',
+    );
     if (res.ok) {
       message.success(res.message);
       await loadDevices();
@@ -1227,7 +1171,9 @@ onMounted(async () => {
     api.onAdbOutput((payload: { text: string }) => pushLog(payload.text));
   }
   if (api.onAdbProgress) {
-    api.onAdbProgress((payload: InstallProgressState) => onInstallProgress(payload));
+    api.onAdbProgress((payload: InstallProgressState) =>
+      onInstallProgress(payload),
+    );
   }
   if (api.onStressOutput) {
     api.onStressOutput((line: string) => {
@@ -1243,7 +1189,10 @@ onMounted(async () => {
   }
   if (api.onStressEscaped) {
     api.onStressEscaped((top: string) => {
-      pushLog(`${i18n.t('跑出目标应用了（当前是')} ${top}），${i18n.t('已自动停止')}`, 'err');
+      pushLog(
+        `${i18n.t('跑出目标应用了（当前是')} ${top}），${i18n.t('已自动停止')}`,
+        'err',
+      );
       message.warning(i18n.t('跑出目标应用了，已自动停止'));
     });
   }
@@ -1269,7 +1218,10 @@ onMounted(async () => {
   }
   if (api.onMonkeyEscaped) {
     api.onMonkeyEscaped((top: string) => {
-      pushLog(`${i18n.t('monkey 跑出目标应用了（当前是')} ${top}），${i18n.t('已自动停止')}`, 'err');
+      pushLog(
+        `${i18n.t('monkey 跑出目标应用了（当前是')} ${top}），${i18n.t('已自动停止')}`,
+        'err',
+      );
       message.warning(i18n.t('monkey 跑出目标应用了，已自动停止'));
       monkeyRunning.value = false;
       if (monkeyTimer) {
@@ -1336,7 +1288,8 @@ function stateIcon(state: string) {
 }
 function stateText(state: string) {
   if (state === 'device') return i18n.t('可用');
-  if (state === 'unauthorized') return i18n.t('未授权，手机上点「允许 USB 调试」');
+  if (state === 'unauthorized')
+    return i18n.t('未授权，手机上点「允许 USB 调试」');
   if (state === 'offline') return i18n.t('离线');
   return state;
 }
@@ -1366,810 +1319,1110 @@ function deviceSubtitle(d: AdbDevice) {
 <template>
   <div class="adb-page">
     <div class="adb-main">
-    <!-- ① adb 状态：始终显示，找到就用它，找不到就引导手动指定 -->
-    <div class="adb-bar" :class="{ 'adb-bar-bad': adb && !adb.found }">
-      <template v-if="adb && adb.found">
-        <ApiOutlined class="bar-icon" />
-        <span class="bar-text">
-          <span class="bar-strong">adb {{ adb.version || '未知版本' }}</span>
-          <a-tooltip :title="adb.file">
-            <span class="bar-path">{{ adb.file }}</span>
-          </a-tooltip>
-          <span class="bar-source">（{{ adb.sourceText }}）</span>
-        </span>
-        <a-button size="small" type="text" @click="pickAdb">{{ $t('更换') }}</a-button>
-      </template>
-      <template v-else>
-        <ExclamationCircleFilled class="bar-icon bar-icon-bad" />
-        <span class="bar-text">{{ adb?.error || $t('没找到 adb') }}</span>
-        <a-button size="small" type="primary" @click="pickAdb">
-          {{ $t('选择 adb 文件') }}
-        </a-button>
-        <a-tooltip :title="$t('去下载 platform-tools')">
+      <!-- ① adb 状态：始终显示，找到就用它，找不到就引导手动指定 -->
+      <div
+        class="adb-bar"
+        :class="{ 'adb-bar-bad': adb && !adb.found }"
+      >
+        <template v-if="adb && adb.found">
+          <ApiOutlined class="bar-icon" />
+          <span class="bar-text">
+            <span class="bar-strong">adb {{ adb.version || '未知版本' }}</span>
+            <a-tooltip :title="adb.file">
+              <span class="bar-path">{{ adb.file }}</span>
+            </a-tooltip>
+            <span class="bar-source">（{{ adb.sourceText }}）</span>
+          </span>
           <a-button
             size="small"
             type="text"
-            @click="api.openUrl('https://developer.android.com/tools/releases/platform-tools')"
+            @click="pickAdb"
           >
-            {{ $t('没装过？') }}
+            {{ $t('更换') }}
+          </a-button>
+        </template>
+        <template v-else>
+          <ExclamationCircleFilled class="bar-icon bar-icon-bad" />
+          <span class="bar-text">{{ adb?.error || $t('没找到 adb') }}</span>
+          <a-button
+            size="small"
+            type="primary"
+            @click="pickAdb"
+          >
+            {{ $t('选择 adb 文件') }}
+          </a-button>
+          <a-tooltip :title="$t('去下载 platform-tools')">
+            <a-button
+              size="small"
+              type="text"
+              @click="
+                api.openUrl(
+                  'https://developer.android.com/tools/releases/platform-tools',
+                )
+              "
+            >
+              {{ $t('没装过？') }}
+            </a-button>
+          </a-tooltip>
+        </template>
+        <a-tooltip
+          v-if="adb?.source === 'custom'"
+          :title="$t('忘掉手动指定的，恢复自动探测')"
+        >
+          <a-button
+            size="small"
+            type="text"
+            @click="resetAdb"
+          >
+            {{ $t('恢复自动') }}
           </a-button>
         </a-tooltip>
-      </template>
-      <a-tooltip v-if="adb?.source === 'custom'" :title="$t('忘掉手动指定的，恢复自动探测')">
-        <a-button size="small" type="text" @click="resetAdb">{{ $t('恢复自动') }}</a-button>
-      </a-tooltip>
-    </div>
+      </div>
 
-    <!-- ② 设备 -->
-    <div class="section-head">
-      <span class="section-title">{{ $t('设备') }}</span>
-      <span v-if="devices.length" class="section-count">{{ devices.length }}</span>
-      <a-tooltip :title="$t('重新扫描')">
-        <ReloadOutlined class="section-action" :spin="loadingDevices" @click="loadDevices" />
-      </a-tooltip>
-    </div>
+      <!-- ② 设备 -->
+      <div class="section-head">
+        <span class="section-title">{{ $t('设备') }}</span>
+        <span
+          v-if="devices.length"
+          class="section-count"
+        >
+          {{ devices.length }}
+        </span>
+        <a-tooltip :title="$t('重新扫描')">
+          <ReloadOutlined
+            class="section-action"
+            :spin="loadingDevices"
+            @click="loadDevices"
+          />
+        </a-tooltip>
+      </div>
 
-    <div v-if="devices.length" class="device-list">
       <div
-        v-for="d in devices"
-        :key="d.serial"
-        class="device-card"
-        :class="{ 'device-card-active': d.serial === currentSerial }"
-        @click="selectDevice(d.serial)"
+        v-if="devices.length"
+        class="device-list"
       >
-        <MobileOutlined class="device-icon" />
-        <div class="device-info">
-          <div class="device-name">{{ deviceTitle(d) }}</div>
-          <div class="device-sub">{{ deviceSubtitle(d) }}</div>
-        </div>
-        <div class="device-state" :class="'state-' + d.state">
-          <component :is="stateIcon(d.state)" />
-          <span>{{ stateText(d.state) }}</span>
+        <div
+          v-for="d in devices"
+          :key="d.serial"
+          class="device-card"
+          :class="{ 'device-card-active': d.serial === currentSerial }"
+          @click="selectDevice(d.serial)"
+        >
+          <MobileOutlined class="device-icon" />
+          <div class="device-info">
+            <div class="device-name">{{ deviceTitle(d) }}</div>
+            <div class="device-sub">{{ deviceSubtitle(d) }}</div>
+          </div>
+          <div
+            class="device-state"
+            :class="'state-' + d.state"
+          >
+            <component :is="stateIcon(d.state)" />
+            <span>{{ stateText(d.state) }}</span>
+          </div>
         </div>
       </div>
-    </div>
-    <div v-else class="device-empty">
-      <MobileOutlined />
-      <span>{{ $t('没检测到设备。插上数据线，手机弹「允许 USB 调试」时点允许') }}</span>
-    </div>
-
-    <!-- ③ 功能磁贴 -->
-    <div class="section-head">
-      <span class="section-title">{{ $t('功能') }}</span>
-    </div>
-
-    <div class="tile-grid">
-      <!-- 拖 APK 安装 -->
       <div
-        class="tile"
-        :class="{ 'tile-drop': dragging, 'tile-disabled': !ready || installing }"
-        @dragover="onDragOver"
-        @dragleave="onDragLeave"
-        @drop="onDrop"
+        v-else
+        class="device-empty"
       >
-        <div class="tile-main" @click="onInstallTileClick">
-        <div class="tile-icon">
-          <LoadingOutlined v-if="installing" spin />
-          <AppstoreAddOutlined v-else />
-        </div>
-        <div class="tile-title">{{ $t('安装应用') }}</div>
+        <MobileOutlined />
+        <span>
+          {{ $t('没检测到设备。插上数据线，手机弹「允许 USB 调试」时点允许') }}
+        </span>
+      </div>
 
-        <!-- 安装中：显示进度、用时、取消 -->
-        <template v-if="installState">
-          <a-progress
-            v-if="installState.phase === 'push'"
-            :percent="installState.percent"
-            :show-info="false"
-            size="small"
-            class="tile-progress"
-          />
-          <div class="tile-desc">
-            {{ installState?.text || $t('准备中…') }}
-          </div>
-          <div class="tile-desc tile-dim">
-            {{ mbText }} · {{ $t('已用') }} {{ elapsedText }}
-          </div>
-          <a-button size="small" danger class="tile-cancel" @click.stop="cancelInstall">
-            {{ $t('取消安装') }}
-          </a-button>
-        </template>
+      <!-- ③ 功能磁贴 -->
+      <div class="section-head">
+        <span class="section-title">{{ $t('功能') }}</span>
+      </div>
 
-        <template v-else>
-          <div class="tile-desc">
-            {{ dragging ? $t('松手就开始安装') : $t('把 .apk 拖到这里，或点击选择') }}
-          </div>
-        </template>
-        </div>
+      <div class="tile-grid">
+        <!-- 拖 APK 安装 -->
+        <div
+          class="tile"
+          :class="{
+            'tile-drop': dragging,
+            'tile-disabled': !ready || installing,
+          }"
+          @dragover="onDragOver"
+          @dragleave="onDragLeave"
+          @drop="onDrop"
+        >
+          <div
+            class="tile-main"
+            @click="onInstallTileClick"
+          >
+            <div class="tile-icon">
+              <LoadingOutlined
+                v-if="installing"
+                spin
+              />
+              <AppstoreAddOutlined v-else />
+            </div>
+            <div class="tile-title">{{ $t('安装应用') }}</div>
 
-        <!-- 右：配置 -->
-        <div class="tile-side">
-          <!-- 包一层 guard：antd 的 checkbox 根元素是 label，会往内部 input
+            <!-- 安装中：显示进度、用时、取消 -->
+            <template v-if="installState">
+              <a-progress
+                v-if="installState.phase === 'push'"
+                :percent="installState.percent"
+                :show-info="false"
+                size="small"
+                class="tile-progress"
+              />
+              <div class="tile-desc">
+                {{ installState?.text || $t('准备中…') }}
+              </div>
+              <div class="tile-desc tile-dim">
+                {{ mbText }} · {{ $t('已用') }} {{ elapsedText }}
+              </div>
+              <a-button
+                size="small"
+                danger
+                class="tile-cancel"
+                @click.stop="cancelInstall"
+              >
+                {{ $t('取消安装') }}
+              </a-button>
+            </template>
+
+            <template v-else>
+              <div class="tile-desc">
+                {{
+                  dragging
+                    ? $t('松手就开始安装')
+                    : $t('把 .apk 拖到这里，或点击选择')
+                }}
+              </div>
+            </template>
+          </div>
+
+          <!-- 右：配置 -->
+          <div class="tile-side">
+            <!-- 包一层 guard：antd 的 checkbox 根元素是 label，会往内部 input
                再派发一次 click，事件照样冒泡到磁贴，光在 checkbox 上写
                @click.stop 拦不住 -->
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-checkbox v-model:checked="autoOpen" class="tile-side-check" :disabled="!ready">
-              {{ $t('安装后自动打开') }}
-            </a-checkbox>
-          </span>
-          <a-tooltip
-            :title="$t('有些手机（比如华为荣耀）默认要求 adb 安装时在手机上点确认，勾上就免了')"
-          >
-            <span class="tile-guard" @click.stop @mousedown.stop>
+            <span
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
               <a-checkbox
+                v-model:checked="autoOpen"
                 class="tile-side-check"
-                :checked="installConfirm === false"
                 :disabled="!ready"
-                @change="(e: any) => toggleSkipConfirm(e.target.checked)"
               >
-                {{ $t('跳过安装确认') }}
+                {{ $t('安装后自动打开') }}
               </a-checkbox>
             </span>
-          </a-tooltip>
-        </div>
-      </div>
-
-      <!-- 卸载应用 -->
-      <div class="tile" :class="{ 'tile-disabled': !ready }">
-        <div class="tile-main" @click="ready && openUninstall()">
-          <div class="tile-icon"><DeleteOutlined /></div>
-          <div class="tile-title">{{ $t('卸载应用') }}</div>
-          <div class="tile-desc">{{ $t('查看手机上装的应用并卸载') }}</div>
-        </div>
-        <div class="tile-side">
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('默认只看用户装的 App')">
-              <a-checkbox
-                v-model:checked="includeSystem"
-                class="tile-side-check"
-                :disabled="!ready"
-                @change="loadPackages"
+            <a-tooltip
+              :title="
+                $t(
+                  '有些手机（比如华为荣耀）默认要求 adb 安装时在手机上点确认，勾上就免了',
+                )
+              "
+            >
+              <span
+                class="tile-guard"
+                @click.stop
+                @mousedown.stop
               >
-                {{ $t('显示系统应用') }}
-              </a-checkbox>
+                <a-checkbox
+                  class="tile-side-check"
+                  :checked="installConfirm === false"
+                  :disabled="!ready"
+                  @change="(e: any) => toggleSkipConfirm(e.target.checked)"
+                >
+                  {{ $t('跳过安装确认') }}
+                </a-checkbox>
+              </span>
             </a-tooltip>
-          </span>
+          </div>
         </div>
-      </div>
 
-      <!-- 截图：左边截屏，右边是最近一张缩略图（点开看全部） -->
-      <div class="tile" :class="{ 'tile-disabled': !ready }">
+        <!-- 卸载应用 -->
         <div
-          class="tile-main"
-          :class="{ 'tile-half-disabled': shooting }"
-          @click="ready && !shooting && takeScreenshot()"
+          class="tile"
+          :class="{ 'tile-disabled': !ready }"
         >
-          <div class="tile-icon">
-            <LoadingOutlined v-if="shooting" spin />
-            <CameraOutlined v-else />
+          <div
+            class="tile-main"
+            @click="ready && openUninstall()"
+          >
+            <div class="tile-icon"><DeleteOutlined /></div>
+            <div class="tile-title">{{ $t('卸载应用') }}</div>
+            <div class="tile-desc">{{ $t('查看手机上装的应用并卸载') }}</div>
           </div>
-          <div class="tile-title">{{ $t('截图') }}</div>
-          <div class="tile-desc">
-            {{ shooting ? $t('正在截图…') : $t('点这里截取手机画面') }}
+          <div class="tile-side">
+            <span
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
+              <a-tooltip :title="$t('默认只看用户装的 App')">
+                <a-checkbox
+                  v-model:checked="includeSystem"
+                  class="tile-side-check"
+                  :disabled="!ready"
+                  @change="loadPackages"
+                >
+                  {{ $t('显示系统应用') }}
+                </a-checkbox>
+              </a-tooltip>
+            </span>
           </div>
         </div>
 
-        <div class="tile-side">
-        <div class="tile-side-entry" @click="ready && openShots()">
-          <a-tooltip :title="$t('查看截图记录')">
-            <a-badge
-              :count="unseenCount"
-              :overflow-count="99"
-              size="small"
-              :offset="[-4, 4]"
-            >
-              <img
-                v-if="latestThumb"
-                :src="latestThumb"
-                class="tile-thumb"
-                :title="latestName"
-                alt=""
+        <!-- 截图：左边截屏，右边是最近一张缩略图（点开看全部） -->
+        <div
+          class="tile"
+          :class="{ 'tile-disabled': !ready }"
+        >
+          <div
+            class="tile-main"
+            :class="{ 'tile-half-disabled': shooting }"
+            @click="ready && !shooting && takeScreenshot()"
+          >
+            <div class="tile-icon">
+              <LoadingOutlined
+                v-if="shooting"
+                spin
               />
-              <div v-else class="tile-thumb tile-thumb-empty">
-                <PictureOutlined />
-              </div>
-            </a-badge>
-          </a-tooltip>
-          <div class="tile-side-entry-label">{{ $t('截图记录') }}</div>
-        </div>
-        </div>
-      </div>
-
-      <!-- 屏幕常亮 -->
-      <div class="tile" :class="{ 'tile-disabled': !ready || busyStayOn }">
-        <div class="tile-main" @click="toggleStayAwake">
-          <div class="tile-icon">
-            <LoadingOutlined v-if="busyStayOn" spin />
-            <BulbOutlined v-else />
-          </div>
-          <div class="tile-title">{{ $t('屏幕常亮') }}</div>
-          <div class="tile-desc">{{ stayAwakeDesc }}</div>
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-switch
-              size="small"
-              :checked="!!stayAwake?.on"
-              :disabled="!ready"
-              :loading="busyStayOn"
-              @click="toggleStayAwake"
-            />
-          </span>
-        </div>
-        <div class="tile-side">
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-checkbox v-model:checked="autoStayOn" class="tile-side-check">
-              {{ $t('连接后自动开启') }}
-            </a-checkbox>
-          </span>
-        </div>
-      </div>
-
-      <!-- 无线连接 -->
-      <div class="tile" :class="{ 'tile-disabled': !ready }">
-        <div class="tile-main tile-main-flat">
-          <div class="tile-icon"><WifiOutlined /></div>
-          <a-tooltip :title="$t('插线时点一次「开启」，之后拔线也能用')">
-            <div class="tile-title">{{ $t('无线调试') }}</div>
-          </a-tooltip>
-          <div class="tile-desc">{{ $t('插线开启一次，之后可拔线') }}</div>
-          <div class="tile-row">
-            <a-button size="small" :disabled="!ready" :loading="busyWifi" @click.stop="enableWifi">
-              <UsbOutlined />
-              {{ $t('开启') }}
-            </a-button>
-            <a-button
-              size="small"
-              type="primary"
-              :disabled="!wifiIp"
-              :loading="busyWifi"
-              @click.stop="connectWifi"
-            >
-              <LinkOutlined />
-              {{ $t('连接') }}
-            </a-button>
-          </div>
-        </div>
-        <div class="tile-side">
-          <a-tooltip :title="$t('要连的手机 IP，例如 192.168.1.5')">
-            <div class="tile-side-entry" @click="wifiIpOpen = true">
-              <SettingOutlined class="tile-side-entry-icon" />
-              <div class="tile-side-entry-label">
-                {{ wifiIp ? $t('已设 IP') : $t('设置 IP') }}
-              </div>
+              <CameraOutlined v-else />
             </div>
-          </a-tooltip>
-        </div>
-      </div>
+            <div class="tile-title">{{ $t('截图') }}</div>
+            <div class="tile-desc">
+              {{ shooting ? $t('正在截图…') : $t('点这里截取手机画面') }}
+            </div>
+          </div>
 
-      <!-- 自定义命令 -->
-      <div class="tile" :class="{ 'tile-disabled': !ready }">
-        <div class="tile-main tile-main-flat">
-          <div class="tile-icon"><ThunderboltOutlined /></div>
-          <div class="tile-title">{{ $t('自定义命令') }}</div>
-          <div class="tile-row">
-            <a-input
-              v-model:value="customCmd"
-              size="small"
-              :placeholder="$t('例如 pm list packages -3')"
-              :disabled="!ready"
-              @press-enter="runCustom"
-            />
-            <a-button
-              size="small"
-              type="primary"
-              :disabled="!ready || !customCmd.trim()"
-              :loading="busyCustom"
-              @click.stop="runCustom"
+          <div class="tile-side">
+            <div
+              class="tile-side-entry"
+              @click="ready && openShots()"
             >
-              <PlayCircleOutlined />
-              {{ $t('执行') }}
-            </a-button>
+              <a-tooltip :title="$t('查看截图记录')">
+                <a-badge
+                  :count="unseenCount"
+                  :overflow-count="99"
+                  size="small"
+                  :offset="[-4, 4]"
+                >
+                  <img
+                    v-if="latestThumb"
+                    :src="latestThumb"
+                    class="tile-thumb"
+                    :title="latestName"
+                    alt=""
+                  />
+                  <div
+                    v-else
+                    class="tile-thumb tile-thumb-empty"
+                  >
+                    <PictureOutlined />
+                  </div>
+                </a-badge>
+              </a-tooltip>
+              <div class="tile-side-entry-label">{{ $t('截图记录') }}</div>
+            </div>
           </div>
         </div>
-        <div class="tile-side">
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('跑完自动把输入框清空')">
-              <a-checkbox v-model:checked="customClearAfter" class="tile-side-check">
-                {{ $t('执行后清空') }}
+
+        <!-- 屏幕常亮 -->
+        <div
+          class="tile"
+          :class="{ 'tile-disabled': !ready || busyStayOn }"
+        >
+          <div
+            class="tile-main"
+            @click="toggleStayAwake"
+          >
+            <div class="tile-icon">
+              <LoadingOutlined
+                v-if="busyStayOn"
+                spin
+              />
+              <BulbOutlined v-else />
+            </div>
+            <div class="tile-title">{{ $t('屏幕常亮') }}</div>
+            <div class="tile-desc">{{ stayAwakeDesc }}</div>
+            <span
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
+              <a-switch
+                size="small"
+                :checked="!!stayAwake?.on"
+                :disabled="!ready"
+                :loading="busyStayOn"
+                @click="toggleStayAwake"
+              />
+            </span>
+          </div>
+          <div class="tile-side">
+            <span
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
+              <a-checkbox
+                v-model:checked="autoStayOn"
+                class="tile-side-check"
+              >
+                {{ $t('连接后自动开启') }}
               </a-checkbox>
+            </span>
+          </div>
+        </div>
+
+        <!-- 无线连接 -->
+        <div
+          class="tile"
+          :class="{ 'tile-disabled': !ready }"
+        >
+          <div class="tile-main tile-main-flat">
+            <div class="tile-icon"><WifiOutlined /></div>
+            <a-tooltip :title="$t('插线时点一次「开启」，之后拔线也能用')">
+              <div class="tile-title">{{ $t('无线调试') }}</div>
             </a-tooltip>
-          </span>
-        </div>
-      </div>
-
-      <!-- 一键填调试地址：左边填+点设置，右边设置 -->
-      <div class="tile" :class="{ 'tile-disabled': !ready }">
-        <div
-          class="tile-main"
-          :class="{ 'tile-half-disabled': fillBusy }"
-          @click="ready && !fillBusy && fillDebugUrl()"
-        >
-          <div class="tile-icon">
-            <LoadingOutlined v-if="fillBusy" spin />
-            <EditOutlined v-else />
+            <div class="tile-desc">{{ $t('插线开启一次，之后可拔线') }}</div>
+            <div class="tile-row">
+              <a-button
+                size="small"
+                :disabled="!ready"
+                :loading="busyWifi"
+                @click.stop="enableWifi"
+              >
+                <UsbOutlined />
+                {{ $t('开启') }}
+              </a-button>
+              <a-button
+                size="small"
+                type="primary"
+                :disabled="!wifiIp"
+                :loading="busyWifi"
+                @click.stop="connectWifi"
+              >
+                <LinkOutlined />
+                {{ $t('连接') }}
+              </a-button>
+            </div>
           </div>
-          <div class="tile-title">{{ $t('填调试地址') }}</div>
-          <div class="tile-desc">
-            {{ $t('打开 App 调试页后点这里') }}
-          </div>
-        </div>
-        <div class="tile-side">
-          <div class="tile-side-entry" @click="openFillSettings">
-            <SettingOutlined class="tile-side-entry-icon" />
-            <div class="tile-side-entry-label">{{ $t('设置') }}</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Monkey 压测：左边开始，右边设置参数 -->
-      <div class="tile" :class="{ 'tile-disabled': !ready }">
-        <div
-          class="tile-main"
-          :class="{ 'tile-half-disabled': monkeyStarting }"
-          @click="ready && !monkeyStarting && toggleMonkey()"
-        >
-          <div class="tile-icon">
-            <LoadingOutlined v-if="monkeyStarting" spin />
-            <BugOutlined v-else />
-          </div>
-          <div class="tile-title">
-            {{ monkeyForm.mode === 'stress' ? $t('区域随机操作') : $t('Monkey 压测') }}
-          </div>
-          <div class="tile-desc">
-            <template v-if="monkeyRunning">
-              {{ runningMode === 'stress' ? $t('限定区域操作中') : $t('monkey 运行中') }} ·
-              {{ monkeyActions }} / {{ stressProgress.total || monkeyForm.count }} ·
-              {{ monkeyElapsedText() }}
-            </template>
-            <template v-else>
-              {{ monkeyForm.mode === 'stress' ? $t('限定区域操作') : $t('Monkey 压测') }} ·
-              {{ $t('点这里开始跑') }}
-            </template>
-          </div>
-        </div>
-        <div class="tile-side">
-          <div class="tile-side-entry" @click="openMonkeySettings">
-            <SettingOutlined class="tile-side-entry-icon" />
-            <div class="tile-side-entry-label">{{ $t('设置参数') }}</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 传文件到手机 -->
-      <div
-        class="tile"
-        :class="{ 'tile-drop': pushDragging, 'tile-disabled': !ready || pushing }"
-        @dragover="onPushDragOver"
-        @dragleave="onPushDragLeave"
-        @drop="onPushDrop"
-      >
-        <div class="tile-main" @click="ready && !pushing && pickAndPush()">
-        <div class="tile-icon">
-          <LoadingOutlined v-if="pushing" spin />
-          <UploadOutlined v-else />
-        </div>
-        <div class="tile-title">{{ $t('传文件到手机') }}</div>
-        <template v-if="pushing">
-          <a-progress
-            :percent="pushState?.percent ?? 0"
-            :show-info="false"
-            size="small"
-            class="tile-progress"
-          />
-          <div class="tile-desc">
-            {{ pushState ? `${pushState.index}/${pushState.count} ${pushState.name}` : $t('准备中…') }}
-          </div>
-          <div class="tile-desc tile-dim">
-            {{ pushMb }} · {{ $t('已用') }} {{ pushElapsed }} {{ $t('秒') }}
-          </div>
-          <a-button size="small" danger class="tile-cancel" @click.stop="cancelPush">
-            {{ $t('取消') }}
-          </a-button>
-        </template>
-        <template v-else>
-          <div class="tile-desc">
-            {{ pushDragging ? $t('松手就开始传') : $t('把文件拖到这里，或点击选择') }}
-          </div>
-        </template>
-        </div>
-
-        <!-- 右：配置（两个入口一直显示） -->
-        <div class="tile-side">
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('在手机上打开这个文件夹')">
+          <div class="tile-side">
+            <a-tooltip :title="$t('要连的手机 IP，例如 192.168.1.5')">
               <div
                 class="tile-side-entry"
-                :class="{ 'tile-side-entry-off': !ready }"
-                @click="openFolderOnPhone"
+                @click="wifiIpOpen = true"
               >
-                <FolderOpenOutlined class="tile-side-entry-icon" />
-                <div class="tile-side-entry-label">{{ $t('打开接收目录') }}</div>
-              </div>
-            </a-tooltip>
-          </span>
-          <div class="tile-side-divider"></div>
-          <span class="tile-guard" @click.stop @mousedown.stop>
-            <a-tooltip :title="$t('改接收目录')">
-              <div class="tile-side-entry" @click="pushDestOpen = true">
                 <SettingOutlined class="tile-side-entry-icon" />
-                <div class="tile-side-entry-label">{{ $t('改接收目录') }}</div>
+                <div class="tile-side-entry-label">
+                  {{ wifiIp ? $t('已设 IP') : $t('设置 IP') }}
+                </div>
               </div>
             </a-tooltip>
-          </span>
+          </div>
+        </div>
+
+        <!-- 自定义命令 -->
+        <div
+          class="tile"
+          :class="{ 'tile-disabled': !ready }"
+        >
+          <div class="tile-main tile-main-flat">
+            <div class="tile-icon"><ThunderboltOutlined /></div>
+            <div class="tile-title">{{ $t('自定义命令') }}</div>
+            <div class="tile-row">
+              <a-input
+                v-model:value="customCmd"
+                size="small"
+                :placeholder="$t('例如 pm list packages -3')"
+                :disabled="!ready"
+                @press-enter="runCustom"
+              />
+              <a-button
+                size="small"
+                type="primary"
+                :disabled="!ready || !customCmd.trim()"
+                :loading="busyCustom"
+                @click.stop="runCustom"
+              >
+                <PlayCircleOutlined />
+                {{ $t('执行') }}
+              </a-button>
+            </div>
+          </div>
+          <div class="tile-side">
+            <span
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
+              <a-tooltip :title="$t('跑完自动把输入框清空')">
+                <a-checkbox
+                  v-model:checked="customClearAfter"
+                  class="tile-side-check"
+                >
+                  {{ $t('执行后清空') }}
+                </a-checkbox>
+              </a-tooltip>
+            </span>
+          </div>
+        </div>
+
+        <!-- Monkey 压测：左边开始，右边设置参数 -->
+        <div
+          class="tile"
+          :class="{ 'tile-disabled': !ready }"
+        >
+          <div
+            class="tile-main"
+            :class="{ 'tile-half-disabled': monkeyStarting }"
+            @click="ready && !monkeyStarting && toggleMonkey()"
+          >
+            <div class="tile-icon">
+              <LoadingOutlined
+                v-if="monkeyStarting"
+                spin
+              />
+              <BugOutlined v-else />
+            </div>
+            <div class="tile-title">
+              {{
+                monkeyForm.mode === 'stress'
+                  ? $t('区域随机操作')
+                  : $t('Monkey 压测')
+              }}
+            </div>
+            <div class="tile-desc">
+              <template v-if="monkeyRunning">
+                {{
+                  runningMode === 'stress'
+                    ? $t('限定区域操作中')
+                    : $t('monkey 运行中')
+                }}
+                · {{ monkeyActions }} /
+                {{ stressProgress.total || monkeyForm.count }} ·
+                {{ monkeyElapsedText() }}
+              </template>
+              <template v-else>
+                {{
+                  monkeyForm.mode === 'stress'
+                    ? $t('限定区域操作')
+                    : $t('Monkey 压测')
+                }}
+                ·
+                {{ $t('点这里开始跑') }}
+              </template>
+            </div>
+          </div>
+          <div class="tile-side">
+            <div
+              class="tile-side-entry"
+              @click="openMonkeySettings"
+            >
+              <SettingOutlined class="tile-side-entry-icon" />
+              <div class="tile-side-entry-label">{{ $t('设置参数') }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 传文件到手机 -->
+        <div
+          class="tile"
+          :class="{
+            'tile-drop': pushDragging,
+            'tile-disabled': !ready || pushing,
+          }"
+          @dragover="onPushDragOver"
+          @dragleave="onPushDragLeave"
+          @drop="onPushDrop"
+        >
+          <div
+            class="tile-main"
+            @click="ready && !pushing && pickAndPush()"
+          >
+            <div class="tile-icon">
+              <LoadingOutlined
+                v-if="pushing"
+                spin
+              />
+              <UploadOutlined v-else />
+            </div>
+            <div class="tile-title">{{ $t('传文件到手机') }}</div>
+            <template v-if="pushing">
+              <a-progress
+                :percent="pushState?.percent ?? 0"
+                :show-info="false"
+                size="small"
+                class="tile-progress"
+              />
+              <div class="tile-desc">
+                {{
+                  pushState
+                    ? `${pushState.index}/${pushState.count} ${pushState.name}`
+                    : $t('准备中…')
+                }}
+              </div>
+              <div class="tile-desc tile-dim">
+                {{ pushMb }} · {{ $t('已用') }} {{ pushElapsed }} {{ $t('秒') }}
+              </div>
+              <a-button
+                size="small"
+                danger
+                class="tile-cancel"
+                @click.stop="cancelPush"
+              >
+                {{ $t('取消') }}
+              </a-button>
+            </template>
+            <template v-else>
+              <div class="tile-desc">
+                {{
+                  pushDragging
+                    ? $t('松手就开始传')
+                    : $t('把文件拖到这里，或点击选择')
+                }}
+              </div>
+            </template>
+          </div>
+
+          <!-- 右：配置（两个入口一直显示） -->
+          <div class="tile-side">
+            <span
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
+              <a-tooltip :title="$t('在手机上打开这个文件夹')">
+                <div
+                  class="tile-side-entry"
+                  :class="{ 'tile-side-entry-off': !ready }"
+                  @click="openFolderOnPhone"
+                >
+                  <FolderOpenOutlined class="tile-side-entry-icon" />
+                  <div class="tile-side-entry-label">
+                    {{ $t('打开接收目录') }}
+                  </div>
+                </div>
+              </a-tooltip>
+            </span>
+            <div class="tile-side-divider"></div>
+            <span
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
+              <a-tooltip :title="$t('改接收目录')">
+                <div
+                  class="tile-side-entry"
+                  @click="pushDestOpen = true"
+                >
+                  <SettingOutlined class="tile-side-entry-icon" />
+                  <div class="tile-side-entry-label">
+                    {{ $t('改接收目录') }}
+                  </div>
+                </div>
+              </a-tooltip>
+            </span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- ⑤ 输出 -->
-    <div class="section-head">
-      <span class="section-title">{{ $t('输出') }}</span>
-      <a-tooltip :title="$t('清空输出')">
-        <span class="section-action" @click="logs = []">{{ $t('清空') }}</span>
-      </a-tooltip>
-    </div>
-    <!-- 卸载：应用列表 -->
-    <a-modal
-      v-model:open="uninstallOpen"
-      :title="$t('卸载应用')"
-      :footer="null"
-      width="520px"
-    >
-      <div class="un-toolbar">
-        <a-input
-          v-model:value="pkgSearch"
-          size="small"
-          allow-clear
-          :placeholder="$t('搜索包名')"
-        >
-          <template #prefix><SearchOutlined /></template>
-        </a-input>
-        <a-tooltip :title="$t('系统应用卸了可能影响手机功能，谨慎操作')">
-          <a-checkbox v-model:checked="includeSystem" @change="loadPackages">
-            {{ $t('包含系统应用') }}
-          </a-checkbox>
+      <!-- ⑤ 输出 -->
+      <div class="section-head">
+        <span class="section-title">{{ $t('输出') }}</span>
+        <a-tooltip :title="$t('清空输出')">
+          <span
+            class="section-action"
+            @click="logs = []"
+          >
+            {{ $t('清空') }}
+          </span>
         </a-tooltip>
-        <span v-if="timeLoading" class="un-hint">
-          <LoadingOutlined spin />
-          {{ $t('读取安装时间') }}
-        </span>
-        <span v-else-if="labelLoading" class="un-hint">
-          <LoadingOutlined spin />
-          {{ $t('读取应用名') }} {{ labelProgress.done }}/{{ labelProgress.total }}
-        </span>
       </div>
+      <!-- 卸载：应用列表 -->
+      <a-modal
+        v-model:open="uninstallOpen"
+        :title="$t('卸载应用')"
+        :footer="null"
+        width="520px"
+      >
+        <div class="un-toolbar">
+          <a-input
+            v-model:value="pkgSearch"
+            size="small"
+            allow-clear
+            :placeholder="$t('搜索包名')"
+          >
+            <template #prefix><SearchOutlined /></template>
+          </a-input>
+          <a-tooltip :title="$t('系统应用卸了可能影响手机功能，谨慎操作')">
+            <a-checkbox
+              v-model:checked="includeSystem"
+              @change="loadPackages"
+            >
+              {{ $t('包含系统应用') }}
+            </a-checkbox>
+          </a-tooltip>
+          <span
+            v-if="timeLoading"
+            class="un-hint"
+          >
+            <LoadingOutlined spin />
+            {{ $t('读取安装时间') }}
+          </span>
+          <span
+            v-else-if="labelLoading"
+            class="un-hint"
+          >
+            <LoadingOutlined spin />
+            {{ $t('读取应用名') }} {{ labelProgress.done }}/{{
+              labelProgress.total
+            }}
+          </span>
+        </div>
 
-      <div class="un-list">
-        <div v-if="pkgLoading" class="un-empty">
+        <div class="un-list">
+          <div
+            v-if="pkgLoading"
+            class="un-empty"
+          >
+            <LoadingOutlined spin />
+            {{ $t('读取中…') }}
+          </div>
+          <div
+            v-else-if="!filteredPkgs.length"
+            class="un-empty"
+          >
+            {{ $t('没有匹配的应用') }}
+          </div>
+          <div
+            v-for="pkg in filteredPkgs"
+            :key="pkg"
+            class="un-item"
+          >
+            <div class="un-info">
+              <div class="un-name">{{ appLabels[pkg] || pkg }}</div>
+              <div
+                v-if="appLabels[pkg]"
+                class="un-pkg"
+              >
+                {{ pkg }}
+              </div>
+            </div>
+            <span class="un-time">{{ installDate(pkg) }}</span>
+            <a-button
+              size="small"
+              danger
+              :loading="uninstallingPkg === pkg"
+              @click="confirmUninstall(pkg)"
+            >
+              {{ $t('卸载') }}
+            </a-button>
+          </div>
+        </div>
+
+        <div class="un-foot">
+          <a-checkbox v-model:checked="keepData">
+            {{ $t('保留数据和应用缓存（-k）') }}
+          </a-checkbox>
+          <span class="un-count">
+            {{ filteredPkgs.length }} / {{ pkgList.length }}
+          </span>
+        </div>
+      </a-modal>
+
+      <!-- monkey 设置 -->
+      <a-modal
+        v-model:open="monkeyOpen"
+        :title="$t('Monkey 设置')"
+        :footer="null"
+        width="460px"
+      >
+        <div class="mk-form">
+          <div class="mk-row">
+            <span class="mk-label">{{ $t('方式') }}</span>
+            <a-radio-group
+              v-model:value="monkeyForm.mode"
+              size="small"
+            >
+              <a-radio value="stress">{{ $t('限定区域（推荐）') }}</a-radio>
+              <a-radio value="monkey">{{ $t('官方 monkey') }}</a-radio>
+            </a-radio-group>
+          </div>
+          <div class="mk-tip">
+            {{
+              monkeyForm.mode === 'stress'
+                ? $t(
+                    '坐标由我们自己生成，严格限制在 App 内容区内 —— 不会碰到通知栏和导航栏，每次操作都落在 App 上；代价是慢一些（约 2~3 次/秒）',
+                  )
+                : $t(
+                    '官方的 monkey：快（30+ 次/秒），但触摸坐标在整个屏幕上随机，会随机把通知栏拉下来、点到导航栏',
+                  )
+            }}
+          </div>
+          <div class="mk-row">
+            <span class="mk-label">{{ $t('测试哪个应用') }}</span>
+            <a-select
+              v-model:value="monkeyForm.packageName"
+              show-search
+              size="small"
+              style="flex: 1"
+              :placeholder="
+                pkgLoading
+                  ? $t('读取应用列表…')
+                  : $t('选一个应用（只列第三方）')
+              "
+              :options="pkgOptions"
+              :loading="pkgLoading"
+            />
+          </div>
+          <div class="mk-row">
+            <span class="mk-label">{{ $t('事件数量') }}</span>
+            <a-input-number
+              v-model:value="monkeyForm.count"
+              :min="1"
+              :max="1000000"
+              size="small"
+              style="flex: 1"
+            />
+          </div>
+          <div
+            v-if="monkeyForm.mode === 'monkey'"
+            class="mk-row"
+          >
+            <span class="mk-label">{{ $t('间隔（毫秒）') }}</span>
+            <a-input-number
+              v-model:value="monkeyForm.throttle"
+              :min="0"
+              :max="10000"
+              size="small"
+              style="flex: 1"
+            />
+          </div>
+          <template v-else>
+            <div class="mk-row">
+              <span class="mk-label">{{ $t('操作间隔') }}</span>
+              <a-input-number
+                v-model:value="monkeyForm.stressIntervalMs"
+                :min="0"
+                :max="5000"
+                size="small"
+                style="flex: 1"
+              />
+              <span class="mk-hint">{{ $t('毫秒，越小越快') }}</span>
+            </div>
+            <div class="mk-row">
+              <span class="mk-label">{{ $t('滑动比例') }}</span>
+              <a-slider
+                v-model:value="monkeyForm.stressSwipeRatio"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                style="flex: 1"
+              />
+              <span class="mk-hint">
+                {{ Math.round(monkeyForm.stressSwipeRatio * 100) }}%
+              </span>
+            </div>
+          </template>
+          <div class="mk-row">
+            <span class="mk-label">{{ $t('随机种子') }}</span>
+            <a-input-number
+              v-model:value="monkeyForm.seed"
+              :min="0"
+              size="small"
+              style="flex: 1"
+            />
+            <span class="mk-hint">{{ $t('留着能复现问题') }}</span>
+          </div>
+          <div class="mk-row">
+            <a-checkbox v-model:checked="monkeyForm.ignoreCrashes">
+              {{ $t('忽略崩溃继续跑') }}
+            </a-checkbox>
+            <a-checkbox v-model:checked="monkeyForm.ignoreTimeouts">
+              {{ $t('忽略无响应继续跑') }}
+            </a-checkbox>
+          </div>
+          <div class="mk-row">
+            <a-tooltip
+              :title="
+                $t(
+                  '通知栏只能靠从屏幕顶部往下滑拉下来，而 monkey 的滑动是随机的；不勾这个的话它会时不时把通知栏拉下来',
+                )
+              "
+            >
+              <a-checkbox v-model:checked="monkeyForm.noSwipe">
+                {{ $t('不滑动（避免拉下通知栏）') }}
+              </a-checkbox>
+            </a-tooltip>
+          </div>
+          <div class="mk-row">
+            <a-tooltip
+              :title="
+                $t(
+                  'monkey 默认有相当比例的事件是 BACK/HOME/切换应用，跑一会儿就会回到桌面；勾上就只发点按滑动这类应用内操作',
+                )
+              "
+            >
+              <a-checkbox v-model:checked="monkeyForm.stayInApp">
+                {{ $t('只在应用内操作（不发 BACK/HOME）') }}
+              </a-checkbox>
+            </a-tooltip>
+          </div>
+          <div class="mk-tip">
+            {{
+              $t(
+                'monkey 会往应用里随机点按滑动，用来跑稳定性；输出里出现 CRASH 会被标红',
+              )
+            }}
+          </div>
+          <div class="mk-tip">
+            {{
+              $t(
+                '不勾「只在应用内操作」的话，它还会按 BACK/HOME 和切换应用，那是 monkey 的默认行为',
+              )
+            }}
+          </div>
+        </div>
+        <div class="mk-foot">
+          <a-button
+            size="small"
+            @click="monkeyOpen = false"
+          >
+            {{ $t('取消') }}
+          </a-button>
+          <a-button
+            size="small"
+            type="primary"
+            @click="
+              monkeyOpen = false;
+              startMonkeyRun();
+            "
+          >
+            <PlayCircleOutlined />
+            {{ $t('开始') }}
+          </a-button>
+        </div>
+      </a-modal>
+
+      <!-- 无线调试：手机 IP -->
+      <a-modal
+        v-model:open="wifiIpOpen"
+        :title="$t('无线调试设置')"
+        :footer="null"
+        width="420px"
+      >
+        <div class="set-item">
+          <div class="set-label">{{ $t('手机 IP') }}</div>
+          <a-input
+            v-model:value="wifiIp"
+            size="small"
+            :placeholder="$t('例如 192.168.1.5')"
+            @press-enter="saveWifiIp"
+          />
+          <div class="set-tip">
+            {{ $t('插着线点「开启」时，如果手机上显示 IP 会自动填进来') }}
+          </div>
+        </div>
+        <div class="set-foot">
+          <a-button
+            size="small"
+            type="primary"
+            @click="saveWifiIp"
+          >
+            {{ $t('保存') }}
+          </a-button>
+        </div>
+      </a-modal>
+
+      <!-- 传文件的接收目录 -->
+      <a-modal
+        v-model:open="pushDestOpen"
+        :title="$t('手机上的接收目录')"
+        :footer="null"
+        width="420px"
+      >
+        <a-input
+          v-model:value="pushDest"
+          size="small"
+          placeholder="/sdcard/Download/"
+        />
+        <div class="mk-tip">
+          {{ $t('默认放到 Download 目录，手机上打开「文件管理」就能看到') }}
+        </div>
+        <div class="mk-foot">
+          <a-button
+            size="small"
+            @click="pushDestOpen = false"
+          >
+            {{ $t('取消') }}
+          </a-button>
+          <a-button
+            size="small"
+            type="primary"
+            @click="savePushDest"
+          >
+            {{ $t('保存') }}
+          </a-button>
+        </div>
+      </a-modal>
+
+      <!-- 截图记录 -->
+      <a-modal
+        v-model:open="shotsOpen"
+        :title="$t('截图记录')"
+        :footer="null"
+        width="680px"
+      >
+        <div class="shots-bar">
+          <span class="shots-count">
+            {{ shotCount }} {{ $t('张') }}
+            <template v-if="unseenCount">
+              ·
+              <span class="shots-unseen">
+                {{ unseenCount }} {{ $t('张没看过') }}
+              </span>
+            </template>
+          </span>
+          <a-space :size="6">
+            <a-button
+              size="small"
+              @click="wakeUp"
+            >
+              <ThunderboltOutlined />
+              {{ $t('唤醒屏幕') }}
+            </a-button>
+            <a-button
+              size="small"
+              @click="openShotsFolder"
+            >
+              {{ $t('打开文件夹') }}
+            </a-button>
+          </a-space>
+        </div>
+
+        <div
+          v-if="shotsLoading"
+          class="shots-empty"
+        >
           <LoadingOutlined spin />
           {{ $t('读取中…') }}
         </div>
-        <div v-else-if="!filteredPkgs.length" class="un-empty">
-          {{ $t('没有匹配的应用') }}
+        <div
+          v-else-if="!shots.length"
+          class="shots-empty"
+        >
+          {{ $t('还没有截图') }}
         </div>
-        <div v-for="pkg in filteredPkgs" :key="pkg" class="un-item">
-          <div class="un-info">
-            <div class="un-name">{{ appLabels[pkg] || pkg }}</div>
-            <div v-if="appLabels[pkg]" class="un-pkg">{{ pkg }}</div>
+        <div
+          v-else
+          class="shots-grid"
+        >
+          <div
+            v-for="s in shots"
+            :key="s.name"
+            class="shot-card"
+            :class="{ 'shot-card-new': isShotNew(s.name) }"
+          >
+            <img
+              v-if="s.thumb"
+              :src="s.thumb"
+              class="shot-thumb"
+              @click="viewShot(s.name)"
+            />
+            <div
+              v-else
+              class="shot-thumb shot-thumb-bad"
+            >
+              {{ $t('读不出来') }}
+            </div>
+            <span
+              v-if="isShotNew(s.name)"
+              class="shot-new-dot"
+            >
+              {{ $t('新') }}
+            </span>
+            <div class="shot-meta">
+              <span
+                class="shot-name"
+                :title="s.name"
+              >
+                {{ s.name }}
+              </span>
+              <span class="shot-sub">
+                {{ shotTime(s.mtime) }} · {{ shotSize(s.size) }}
+              </span>
+            </div>
+            <div class="shot-actions">
+              <a-button
+                size="small"
+                @click="saveShotAs(s.name)"
+              >
+                {{ $t('另存为') }}
+              </a-button>
+              <a-popconfirm
+                :title="$t('删掉这张截图？')"
+                :ok-text="$t('删除')"
+                :cancel-text="$t('取消')"
+                @confirm="deleteShot(s.name)"
+              >
+                <a-button
+                  size="small"
+                  danger
+                >
+                  {{ $t('删除') }}
+                </a-button>
+              </a-popconfirm>
+            </div>
           </div>
-          <span class="un-time">{{ installDate(pkg) }}</span>
+        </div>
+      </a-modal>
+
+      <!-- 看大图 -->
+      <a-modal
+        v-model:open="viewerOpen"
+        :title="viewerName"
+        :footer="null"
+        width="fit-content"
+        centered
+      >
+        <img
+          :src="viewerUrl"
+          class="shot-full"
+        />
+        <div class="shot-full-actions">
           <a-button
             size="small"
-            danger
-            :loading="uninstallingPkg === pkg"
-            @click="confirmUninstall(pkg)"
+            type="primary"
+            @click="saveShotAs(viewerName)"
           >
-            {{ $t('卸载') }}
+            {{ $t('另存为') }}
           </a-button>
         </div>
-      </div>
+      </a-modal>
 
-      <div class="un-foot">
-        <a-checkbox v-model:checked="keepData">
-          {{ $t('保留数据和应用缓存（-k）') }}
-        </a-checkbox>
-        <span class="un-count">
-          {{ filteredPkgs.length }} / {{ pkgList.length }}
-        </span>
-      </div>
-    </a-modal>
-
-    <!-- 一键填地址的设置 -->
-    <a-modal
-      v-model:open="fillOpen"
-      :title="$t('填调试地址设置')"
-      :footer="null"
-      width="460px"
-    >
-      <div class="mk-form">
-        <div class="mk-row">
-          <span class="mk-label">{{ $t('要填的地址') }}</span>
-          <span class="mk-value">{{ localIp || $t('读取中…') }}</span>
-        </div>
-        <div class="mk-row">
-          <span class="mk-label">{{ $t('按钮文字') }}</span>
-          <a-input v-model:value="fillForm.buttonText" size="small" style="flex: 1" placeholder="设置" />
-        </div>
-        <div class="mk-row">
-          <span class="mk-label">{{ $t('填完重启') }}</span>
-          <a-select
-            v-model:value="fillForm.packageName"
-            show-search
-            allow-clear
-            size="small"
-            style="flex: 1"
-            :placeholder="pkgLoading ? $t('读取应用列表…') : $t('建议选上：填完自动重启这个 App')"
-            :options="pkgOptions"
-            :loading="pkgLoading"
-          />
-        </div>
-        <div class="mk-row">
-          <span class="mk-label">{{ $t('导航步骤') }}</span>
-          <a-input
-            v-model:value="fillForm.navSteps"
-            size="small"
-            style="flex: 1"
-            placeholder="组件示例,release button 开关"
-          />
-        </div>
-        <div class="mk-tip">
-          {{ $t('自动走进调试页要依次点的按钮，逗号分隔；找不到就跳过（可能已经在后面某一页了）') }}
-        </div>
-        <div class="mk-row">
-          <a-tooltip :title="$t('默认情况下，IP 没变就直接跳过填写（只重启 App），这样最快')">
-            <a-checkbox v-model:checked="fillForm.force">
-              {{ $t('IP 没变时也重填') }}
-            </a-checkbox>
-          </a-tooltip>
-        </div>
-        <div class="mk-tip">
-          {{ $t('用法：先在手机上把 App 的调试页打开（就是填调试Url那个页面），再点磁贴左半边。它会自动找到输入框、清空、填上本机 IP、点按钮，最后重启 App') }}
-        </div>
-        <div class="mk-tip">
-          {{ $t('填完会回读一次输入框内容做校验，不对就不会去点按钮') }}
-        </div>
-      </div>
-      <div class="mk-foot">
-        <a-button size="small" @click="fillOpen = false">{{ $t('关闭') }}</a-button>
-      </div>
-    </a-modal>
-
-    <!-- monkey 设置 -->
-    <a-modal
-      v-model:open="monkeyOpen"
-      :title="$t('Monkey 设置')"
-      :footer="null"
-      width="460px"
-    >
-      <div class="mk-form">
-        <div class="mk-row">
-          <span class="mk-label">{{ $t('方式') }}</span>
-          <a-radio-group v-model:value="monkeyForm.mode" size="small">
-            <a-radio value="stress">{{ $t('限定区域（推荐）') }}</a-radio>
-            <a-radio value="monkey">{{ $t('官方 monkey') }}</a-radio>
-          </a-radio-group>
-        </div>
-        <div class="mk-tip">
-          {{
-            monkeyForm.mode === 'stress'
-              ? $t('坐标由我们自己生成，严格限制在 App 内容区内 —— 不会碰到通知栏和导航栏，每次操作都落在 App 上；代价是慢一些（约 2~3 次/秒）')
-              : $t('官方的 monkey：快（30+ 次/秒），但触摸坐标在整个屏幕上随机，会随机把通知栏拉下来、点到导航栏')
-          }}
-        </div>
-        <div class="mk-row">
-          <span class="mk-label">{{ $t('测试哪个应用') }}</span>
-          <a-select
-            v-model:value="monkeyForm.packageName"
-            show-search
-            size="small"
-            style="flex: 1"
-            :placeholder="pkgLoading ? $t('读取应用列表…') : $t('选一个应用（只列第三方）')"
-            :options="pkgOptions"
-            :loading="pkgLoading"
-          />
-        </div>
-        <div class="mk-row">
-          <span class="mk-label">{{ $t('事件数量') }}</span>
-          <a-input-number v-model:value="monkeyForm.count" :min="1" :max="1000000" size="small" style="flex: 1" />
-        </div>
-        <div v-if="monkeyForm.mode === 'monkey'" class="mk-row">
-          <span class="mk-label">{{ $t('间隔（毫秒）') }}</span>
-          <a-input-number v-model:value="monkeyForm.throttle" :min="0" :max="10000" size="small" style="flex: 1" />
-        </div>
-        <template v-else>
-          <div class="mk-row">
-            <span class="mk-label">{{ $t('操作间隔') }}</span>
-            <a-input-number v-model:value="monkeyForm.stressIntervalMs" :min="0" :max="5000" size="small" style="flex: 1" />
-            <span class="mk-hint">{{ $t('毫秒，越小越快') }}</span>
-          </div>
-          <div class="mk-row">
-            <span class="mk-label">{{ $t('滑动比例') }}</span>
-            <a-slider
-              v-model:value="monkeyForm.stressSwipeRatio"
-              :min="0"
-              :max="1"
-              :step="0.05"
-              style="flex: 1"
-            />
-            <span class="mk-hint">{{ Math.round(monkeyForm.stressSwipeRatio * 100) }}%</span>
-          </div>
-        </template>
-        <div class="mk-row">
-          <span class="mk-label">{{ $t('随机种子') }}</span>
-          <a-input-number v-model:value="monkeyForm.seed" :min="0" size="small" style="flex: 1" />
-          <span class="mk-hint">{{ $t('留着能复现问题') }}</span>
-        </div>
-        <div class="mk-row">
-          <a-checkbox v-model:checked="monkeyForm.ignoreCrashes">{{ $t('忽略崩溃继续跑') }}</a-checkbox>
-          <a-checkbox v-model:checked="monkeyForm.ignoreTimeouts">{{ $t('忽略无响应继续跑') }}</a-checkbox>
-        </div>
-        <div class="mk-row">
-          <a-tooltip
-            :title="$t('通知栏只能靠从屏幕顶部往下滑拉下来，而 monkey 的滑动是随机的；不勾这个的话它会时不时把通知栏拉下来')"
-          >
-            <a-checkbox v-model:checked="monkeyForm.noSwipe">
-              {{ $t('不滑动（避免拉下通知栏）') }}
-            </a-checkbox>
-          </a-tooltip>
-        </div>
-        <div class="mk-row">
-          <a-tooltip
-            :title="$t('monkey 默认有相当比例的事件是 BACK/HOME/切换应用，跑一会儿就会回到桌面；勾上就只发点按滑动这类应用内操作')"
-          >
-            <a-checkbox v-model:checked="monkeyForm.stayInApp">
-              {{ $t('只在应用内操作（不发 BACK/HOME）') }}
-            </a-checkbox>
-          </a-tooltip>
-        </div>
-        <div class="mk-tip">
-          {{ $t('monkey 会往应用里随机点按滑动，用来跑稳定性；输出里出现 CRASH 会被标红') }}
-        </div>
-        <div class="mk-tip">
-          {{ $t('不勾「只在应用内操作」的话，它还会按 BACK/HOME 和切换应用，那是 monkey 的默认行为') }}
-        </div>
-      </div>
-      <div class="mk-foot">
-        <a-button size="small" @click="monkeyOpen = false">{{ $t('取消') }}</a-button>
-        <a-button
-          size="small"
-          type="primary"
-          @click="
-            monkeyOpen = false;
-            startMonkeyRun();
-          "
-        >
-          <PlayCircleOutlined />
-          {{ $t('开始') }}
-        </a-button>
-      </div>
-    </a-modal>
-
-    <!-- 无线调试：手机 IP -->
-    <a-modal
-      v-model:open="wifiIpOpen"
-      :title="$t('无线调试设置')"
-      :footer="null"
-      width="420px"
-    >
-      <div class="set-item">
-        <div class="set-label">{{ $t('手机 IP') }}</div>
-        <a-input
-          v-model:value="wifiIp"
-          size="small"
-          :placeholder="$t('例如 192.168.1.5')"
-          @press-enter="saveWifiIp"
-        />
-        <div class="set-tip">
-          {{ $t('插着线点「开启」时，如果手机上显示 IP 会自动填进来') }}
-        </div>
-      </div>
-      <div class="set-foot">
-        <a-button size="small" type="primary" @click="saveWifiIp">{{ $t('保存') }}</a-button>
-      </div>
-    </a-modal>
-
-    <!-- 传文件的接收目录 -->
-    <a-modal
-      v-model:open="pushDestOpen"
-      :title="$t('手机上的接收目录')"
-      :footer="null"
-      width="420px"
-    >
-      <a-input v-model:value="pushDest" size="small" placeholder="/sdcard/Download/" />
-      <div class="mk-tip">
-        {{ $t('默认放到 Download 目录，手机上打开「文件管理」就能看到') }}
-      </div>
-      <div class="mk-foot">
-        <a-button size="small" @click="pushDestOpen = false">{{ $t('取消') }}</a-button>
-        <a-button size="small" type="primary" @click="savePushDest">{{ $t('保存') }}</a-button>
-      </div>
-    </a-modal>
-
-    <!-- 截图记录 -->
-    <a-modal
-      v-model:open="shotsOpen"
-      :title="$t('截图记录')"
-      :footer="null"
-      width="680px"
-    >
-      <div class="shots-bar">
-        <span class="shots-count">
-          {{ shotCount }} {{ $t('张') }}
-          <template v-if="unseenCount">
-            · <span class="shots-unseen">{{ unseenCount }} {{ $t('张没看过') }}</span>
-          </template>
-        </span>
-        <a-space :size="6">
-          <a-button size="small" @click="wakeUp">
-            <ThunderboltOutlined />
-            {{ $t('唤醒屏幕') }}
-          </a-button>
-          <a-button size="small" @click="openShotsFolder">
-            {{ $t('打开文件夹') }}
-          </a-button>
-        </a-space>
-      </div>
-
-      <div v-if="shotsLoading" class="shots-empty">
-        <LoadingOutlined spin />
-        {{ $t('读取中…') }}
-      </div>
-      <div v-else-if="!shots.length" class="shots-empty">
-        {{ $t('还没有截图') }}
-      </div>
-      <div v-else class="shots-grid">
+      <div
+        ref="logBox"
+        class="adb-log"
+      >
         <div
-          v-for="s in shots"
-          :key="s.name"
-          class="shot-card"
-          :class="{ 'shot-card-new': isShotNew(s.name) }"
+          v-if="!logs.length"
+          class="log-empty"
         >
-          <img
-            v-if="s.thumb"
-            :src="s.thumb"
-            class="shot-thumb"
-            @click="viewShot(s.name)"
-          />
-          <div v-else class="shot-thumb shot-thumb-bad">{{ $t('读不出来') }}</div>
-          <span v-if="isShotNew(s.name)" class="shot-new-dot">{{ $t('新') }}</span>
-          <div class="shot-meta">
-            <span class="shot-name" :title="s.name">{{ s.name }}</span>
-            <span class="shot-sub">{{ shotTime(s.mtime) }} · {{ shotSize(s.size) }}</span>
-          </div>
-          <div class="shot-actions">
-            <a-button size="small" @click="saveShotAs(s.name)">{{ $t('另存为') }}</a-button>
-            <a-popconfirm
-              :title="$t('删掉这张截图？')"
-              :ok-text="$t('删除')"
-              :cancel-text="$t('取消')"
-              @confirm="deleteShot(s.name)"
-            >
-              <a-button size="small" danger>{{ $t('删除') }}</a-button>
-            </a-popconfirm>
-          </div>
+          {{ $t('这里会显示每条命令的输出') }}
+        </div>
+        <div
+          v-for="(l, i) in logs"
+          :key="i"
+          class="log-line"
+          :class="'log-' + l.type"
+        >
+          {{ l.text }}
         </div>
       </div>
-    </a-modal>
-
-    <!-- 看大图 -->
-    <a-modal
-      v-model:open="viewerOpen"
-      :title="viewerName"
-      :footer="null"
-      width="fit-content"
-      centered
-    >
-      <img :src="viewerUrl" class="shot-full" />
-      <div class="shot-full-actions">
-        <a-button size="small" type="primary" @click="saveShotAs(viewerName)">
-          {{ $t('另存为') }}
-        </a-button>
-      </div>
-    </a-modal>
-
-    <div ref="logBox" class="adb-log">
-      <div v-if="!logs.length" class="log-empty">{{ $t('这里会显示每条命令的输出') }}</div>
-      <div v-for="(l, i) in logs" :key="i" class="log-line" :class="'log-' + l.type">
-        {{ l.text }}
-      </div>
-    </div>
     </div>
 
     <!-- 右边：投屏面板，常驻 -->
