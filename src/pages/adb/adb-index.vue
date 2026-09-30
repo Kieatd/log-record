@@ -286,6 +286,18 @@ function groupSubtitle(g: {
  * USB → 直接切过去；WiFi 已经连过 → 切过去；
  * WiFi 还没连 → 插着线的话顺手开好（先读 IP 再 tcpip，再 connect），然后切过去。
  */
+/**
+ * 换通道后把投屏按新通道的参数重开。
+ * USB → 1024/30fps/4Mbps；无线 → 720p/20fps/2Mbps（scrcpy-view 里按 serial 判断）。
+ * 等一拍再开：selectDevice 只改了 currentSerial，props 要下一个 tick 才更新。
+ */
+async function reopenMirror(wasRunning: boolean) {
+  if (!wasRunning || mirrorRunning.value) return;
+  await new Promise((r) => setTimeout(r, 500));
+  mirrorRef.value?.start();
+  pushLog('投屏已按新通道的参数重开', 'info');
+}
+
 async function switchTransport(
   g: { usb?: AdbDevice; wifi?: AdbDevice },
   t: 'usb' | 'wifi',
@@ -306,20 +318,14 @@ async function switchTransport(
       message.warning(i18n.t('没找到 USB 设备：数据线插好了吗'));
       return;
     }
-    if (currentSerial.value !== g.usb.serial) await selectDevice(g.usb.serial);
+    if (currentSerial.value !== usb.serial) await selectDevice(usb.serial);
+    await reopenMirror(wasRunning);
     return;
-
-    // 换通道后，投屏要用新通道的参数重开（USB 1024/30fps/4Mbps，无线 720p/20fps/2Mbps）。
-    // 等一拍再开：selectDevice 只改了 currentSerial，props 要下一个 tick 才更新。
-    if (wasRunning && !mirrorRunning.value) {
-      await new Promise((r) => setTimeout(r, 500));
-      mirrorRef.value?.start();
-      pushLog('投屏已按新通道的参数重开', 'info');
-    }
   }
   if (g.wifi) {
     if (currentSerial.value !== g.wifi.serial)
       await selectDevice(g.wifi.serial);
+    await reopenMirror(wasRunning);
     return;
   }
   if (!g.usb) {
@@ -377,6 +383,9 @@ async function switchTransport(
   } finally {
     busyWifi.value = false;
   }
+
+  // WiFi 新开的这条路径也走同一个收尾
+  await reopenMirror(wasRunning);
 }
 
 async function loadDevices() {
