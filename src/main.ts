@@ -908,47 +908,6 @@ const createWindow = () => {
   });
 
   Menu.setApplicationMenu(null);
-  // TEMP
-  const jsFile = '/tmp/probe-sw.js';
-  const USB_SERIAL = '28PNW17C19000422';
-  setTimeout(() => {
-    let js = '';
-    try {
-      js = fs.readFileSync(jsFile, 'utf8');
-    } catch (e) {
-      console.log('ST     读不到探针: ' + (e as Error).message);
-      return;
-    }
-    mainWindow.webContents
-      .executeJavaScript(js, true)
-      .then((r: unknown) => console.log('ST     ' + String(r)))
-      .catch((e: unknown) => console.log('ST     SW ❌ ' + (e instanceof Error ? e.message : String(e))));
-  }, 9000);
-  // 35 秒后模拟"拔线"：把那台 USB 设备标记为 offline（adb 侧命令，不动线也不动手机）
-  setTimeout(async () => {
-    const info = currentAdb();
-    if (!info.found) return;
-    const r = await runAdb(info.file, ['-s', USB_SERIAL, 'reconnect', 'offline'], {
-      timeout: 15000,
-    });
-    console.log('ST     模拟拔线 reconnect offline → ' + (r.stdout + r.stderr).trim());
-  }, 44000);
-  // TEMP END
-  // TEMP
-  setTimeout(() => {
-    let js = '';
-    try {
-      js = fs.readFileSync('/tmp/probe-auto.js', 'utf8');
-    } catch (e) {
-      console.log('ST     读不到探针: ' + (e as Error).message);
-      return;
-    }
-    mainWindow.webContents
-      .executeJavaScript(js, true)
-      .then((r: unknown) => console.log('ST     ' + String(r)))
-      .catch((e: unknown) => console.log('ST     AUTO ❌ ' + (e instanceof Error ? e.message : String(e))));
-  }, 9000);
-  // TEMP END
   if (maximized) {
     mainWindow.maximize();
   }
