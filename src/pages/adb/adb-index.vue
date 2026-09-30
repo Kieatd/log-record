@@ -1106,29 +1106,43 @@ async function enableWifi() {
   }
   busyWifi.value = true;
   try {
+    /**
+     * 先取手机 IP，再执行 `adb tcpip`。
+     *
+     * 顺序很关键：`adb tcpip 5555` 会重启手机上的 adbd —— USB 连接会瞬间断开再回来，
+     * 紧接着发 adb 命令会拿到 `adb: device 'xxx' not found`。
+     * 之前就是先 tcpip 再取 IP，于是取 IP 永远失败（而且失败是静默的），
+     * 「连接」按钮就一直是灰的 / ⚙ 里永远是空的。
+     */
+    let phoneIp = '';
+    try {
+      const ipRes = await api.adbShell(
+        'ip -f inet addr show wlan0',
+        currentSerial.value,
+      );
+      const ipText = String(ipRes.message || '');
+      // 别取第一个 IP：`ip route` 那种输出第一个是网段地址，所以要认 src / inet 后面那个
+      const m =
+        ipText.match(/src\s+(\d+\.\d+\.\d+\.\d+)/) ||
+        ipText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
+      if (m) phoneIp = m[1];
+    } catch {
+      /* 取不到就等用户手动填 */
+    }
+
     const res = await api.adbTcpip(currentSerial.value, 5555);
     pushLog(
       res.raw ? `$ adb tcpip 5555\n${res.raw}` : res.message,
       res.ok ? 'ok' : 'err',
     );
     if (res.ok) {
-      // 拔线前先记下手机 IP，方便下一步直接连
-      const ipRes = await api.adbShell(
-        'ip -f inet addr show wlan0',
-        currentSerial.value,
-      );
-      const ipText = String(ipRes.message || '');
-      /**
-       * 别直接取输出里第一个 IP。
-       * 实测 `ip route | grep wlan` 的输出是
-       *   `192.168.23.0/24 dev wlan0  proto kernel  scope link  src 192.168.23.48`
-       * 第一个是**网段地址**（192.168.23.0），拿去连是连不上的 —— 要取 src / inet 后面那个。
-       */
-      const m =
-        ipText.match(/src\s+(\d+\.\d+\.\d+\.\d+)/) ||
-        ipText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
-      if (m && !wifiIp.value) wifiIp.value = m[1];
-      message.success(res.message);
+      if (phoneIp) {
+        if (!wifiIp.value) wifiIp.value = phoneIp;
+        // 顺手存下来：这个 IP 是"手机自己的属性"，不是用户输入，
+        // 不存的话重启应用又得重新点一次「开启」才拿得到。
+        localStorage.setItem(WIFI_IP_KEY, phoneIp);
+      }
+      message.success(res.message + (phoneIp ? `  ${phoneIp}` : ''));
     } else {
       message.error(res.message);
     }
