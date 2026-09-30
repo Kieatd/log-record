@@ -445,8 +445,6 @@ const createWindow = () => {
     },
   );
 
-  /* ---------------- 一键填调试地址（UI 自动化） ---------------- */
-
   ipcMain.handle('adb:installTimes', async (_, serial?: string) => {
     const info = currentAdb();
     if (!info.found)
