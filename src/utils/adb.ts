@@ -1626,11 +1626,20 @@ export async function enableTcpip(
   if (serial) args.unshift('-s', serial);
   const res = await runAdb(file, args, { timeout: 20000 });
   const raw = (res.stdout + res.stderr).trim();
-  const ok =
-    res.code === 0 && /restarting in TCP mode|already in TCP mode/i.test(raw);
+  /**
+   * 判断成功只看退出码，不看输出里那句话。
+   *
+   * 实测：这台 HONOR（Android 7）执行 `adb tcpip 5555` 后**什么都不打印**
+   * （stdout/stderr 都空），但退出码 0、手机确实切到了 TCP 模式（紧接着 connect 就成功）。
+   * 原来要求输出里必须出现「restarting in TCP mode」，于是明明成功也报「开启失败」。
+   * 反过来说，真失败（比如设备没插着）adb 会以非 0 退出并在 stderr 写明原因，所以看退出码是可靠的。
+   */
+  const ok = res.code === 0;
   return {
     ok,
-    message: ok ? `已开启无线调试（端口 ${port}）` : raw || '开启失败',
+    message: ok
+      ? `已开启无线调试（端口 ${port}）${raw ? `：${raw}` : ''}`
+      : raw || `开启失败（adb 退出码 ${res.code}）`,
     raw,
   };
 }

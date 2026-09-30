@@ -1114,10 +1114,19 @@ async function enableWifi() {
     if (res.ok) {
       // 拔线前先记下手机 IP，方便下一步直接连
       const ipRes = await api.adbShell(
-        'ip route | grep wlan | head -1',
+        'ip -f inet addr show wlan0',
         currentSerial.value,
       );
-      const m = String(ipRes.message || '').match(/(\d+\.\d+\.\d+\.\d+)/);
+      const ipText = String(ipRes.message || '');
+      /**
+       * 别直接取输出里第一个 IP。
+       * 实测 `ip route | grep wlan` 的输出是
+       *   `192.168.23.0/24 dev wlan0  proto kernel  scope link  src 192.168.23.48`
+       * 第一个是**网段地址**（192.168.23.0），拿去连是连不上的 —— 要取 src / inet 后面那个。
+       */
+      const m =
+        ipText.match(/src\s+(\d+\.\d+\.\d+\.\d+)/) ||
+        ipText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
       if (m && !wifiIp.value) wifiIp.value = m[1];
       message.success(res.message);
     } else {
