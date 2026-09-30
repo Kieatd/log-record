@@ -272,10 +272,22 @@ async function loadInstallConfirm() {
 async function toggleSkipConfirm(checked: boolean) {
   confirmSeq += 1; // 作废在途的旧读取，别让它把刚更新的状态盖回去
   installConfirm.value = !checked;
+  /**
+   * 提示立刻给，不等手机那边回话。
+   *
+   * 改写手机设置要「写一次 + 读回来核对」，而这台手机上**每条 settings 命令本身就要
+   * 1.3~1.4 秒**（实测：合并成一次 shell 也省不掉，因为是命令里的 Java 进程启动慢），
+   * 所以等回读再弹提示就是快 3 秒才看到反馈，用户以为没点动。
+   * 成功是常态：失败时下面会弹错误并重新读一次真实值纠正。
+   */
+  message.success(
+    checked
+      ? i18n.t('已恢复「安装需要确认」')
+      : i18n.t('已关掉手机上的安装确认，之后拖进去就直接装'),
+  );
   const res = await api.adbSetInstallConfirm(!checked, currentSerial.value);
   pushLog(res.message, res.ok ? 'ok' : 'err');
-  if (res.ok) message.success(res.message);
-  else {
+  if (!res.ok) {
     message.error(res.message);
     await loadInstallConfirm();
   }
