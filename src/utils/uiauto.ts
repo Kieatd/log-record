@@ -829,9 +829,7 @@ export async function openFolderOnPhone(
   file: string,
   folder: string,
   serial?: string,
-  cacheFile?: string,
 ): Promise<{ ok: boolean; message: string; steps?: string[] }> {
-  if (cacheFile && cacheFile !== tapCacheFile) loadTapCache(cacheFile);
   const base = serial ? ['-s', serial] : [];
   const dir = folder.endsWith('/') ? folder : `${folder}/`;
 
