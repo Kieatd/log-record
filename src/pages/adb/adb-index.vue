@@ -1139,7 +1139,10 @@ async function enableWifi() {
 
 async function connectWifi() {
   if (!wifiIp.value.trim()) {
-    message.warning(i18n.t('填一下手机的 IP'));
+    // 别把按钮置灰了不说原因：直接告诉用户 IP 从哪来
+    message.warning(
+      `${i18n.t('填一下手机的 IP')}：${i18n.t('插线时点一次「开启」，之后拔线也能用')}；${i18n.t('设置 IP')} ⚙`,
+    );
     return;
   }
   busyWifi.value = true;
@@ -1722,7 +1725,6 @@ function deviceSubtitle(d: AdbDevice) {
               <a-button
                 size="small"
                 type="primary"
-                :disabled="!wifiIp"
                 :loading="busyWifi"
                 @click.stop="connectWifi"
               >
