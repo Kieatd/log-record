@@ -121,8 +121,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /* ---------------- scrcpy 投屏 / 操控 ---------------- */
   scrcpyStatus: () => ipcRenderer.invoke('scrcpy:status'),
-  scrcpyStart: (serial?: string, maxSize?: number, maxFps?: number) =>
-    ipcRenderer.invoke('scrcpy:start', { serial, maxSize, maxFps }),
+  scrcpyStart: (
+    serial?: string,
+    maxSize?: number,
+    maxFps?: number,
+    videoBitRate?: number,
+  ) =>
+    ipcRenderer.invoke('scrcpy:start', {
+      serial,
+      maxSize,
+      maxFps,
+      videoBitRate,
+    }),
   scrcpyStop: () => ipcRenderer.invoke('scrcpy:stop'),
   scrcpyTouch: (payload: {
     action: 'down' | 'up' | 'move';

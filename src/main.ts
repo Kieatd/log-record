@@ -513,7 +513,12 @@ const createWindow = () => {
     'scrcpy:start',
     async (
       _,
-      payload: { serial?: string; maxSize?: number; maxFps?: number },
+      payload: {
+        serial?: string;
+        maxSize?: number;
+        maxFps?: number;
+        videoBitRate?: number;
+      },
     ) => {
       const info = currentAdb();
       if (!info.found)
@@ -523,6 +528,7 @@ const createWindow = () => {
         serverFile: scrcpyServerFile,
         maxSize: payload?.maxSize ?? 1024,
         maxFps: payload?.maxFps ?? 30,
+        videoBitRate: payload?.videoBitRate ?? 4_000_000,
         onMeta: (meta) => {
           mainWindow.webContents.send('scrcpy:meta', meta);
         },
