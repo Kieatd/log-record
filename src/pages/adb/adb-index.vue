@@ -250,6 +250,15 @@ const deviceGroups = computed(() => {
 });
 
 /** 这张卡当前用哪条通道 */
+/**
+ * 这台手机的无线调试 IP。
+ * 无线那条 adb 记录的 serial 本身就是 `ip:port`，所以不用额外跑 adb。
+ * 没显示 = 这台手机还没开无线调试（或刚开、App 还在自动连 —— 3 秒轮询会补上）。
+ */
+function deviceIp(g: { wifi?: AdbDevice }): string {
+  return g.wifi ? g.wifi.serial.replace(/:\d+$/, '') : '';
+}
+
 function activeTransport(g: {
   usb?: AdbDevice;
   wifi?: AdbDevice;
@@ -1751,12 +1760,28 @@ function deviceSubtitle(d: AdbDevice) {
               <a-radio-button value="wifi">WiFi</a-radio-button>
             </a-radio-group>
           </div>
-          <div
-            class="device-state"
-            :class="'state-' + g.best.state"
-          >
-            <component :is="stateIcon(g.best.state)" />
-            <span>{{ stateText(g.best.state) }}</span>
+          <div class="device-right">
+            <div
+              v-if="deviceIp(g)"
+              class="device-net"
+              :title="deviceIp(g)"
+            >
+              <LinkOutlined class="device-net-icon" />
+              <span>{{ deviceIp(g) }}</span>
+            </div>
+            <div
+              v-else
+              class="device-net device-net-off"
+            >
+              {{ $t('无线未开启') }}
+            </div>
+            <div
+              class="device-state"
+              :class="'state-' + g.best.state"
+            >
+              <component :is="stateIcon(g.best.state)" />
+              <span>{{ stateText(g.best.state) }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -2928,6 +2953,27 @@ function deviceSubtitle(d: AdbDevice) {
   font-size: 20px;
   color: #336666;
 }
+.device-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 右上角那个 IP：有 IP 就代表无线调试已经开着、而且 App 已连上 */
+.device-net {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #336666;
+}
+
+.device-net-off {
+  color: #bbb;
+}
+
 .device-transport {
   margin-top: 6px;
 }
