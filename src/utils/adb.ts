@@ -1661,6 +1661,22 @@ export async function connectWifi(
   };
 }
 
+/** 断开无线设备（只在 adb 这边断开；手机上的无线调试开关不受影响） */
+export async function disconnectWifi(
+  file: string,
+  address: string,
+): Promise<{ ok: boolean; message: string; raw: string }> {
+  const target = address.includes(':') ? address : `${address}:5555`;
+  const res = await runAdb(file, ['disconnect', target], { timeout: 15000 });
+  const raw = (res.stdout + res.stderr).trim();
+  const ok = res.code === 0 && /disconnected/i.test(raw);
+  return {
+    ok,
+    message: ok ? `已断开 ${target}` : raw || `断开 ${target} 失败`,
+    raw,
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* 手动指定的路径持久化                                                */
 /* ------------------------------------------------------------------ */

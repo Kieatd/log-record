@@ -19,6 +19,7 @@ import {
   CameraOutlined,
   CheckCircleFilled,
   DeleteOutlined,
+  DisconnectOutlined,
   EditOutlined,
   FolderOpenOutlined,
   CloseCircleFilled,
@@ -896,6 +897,11 @@ const pushDestOpen = ref(false);
 // 无线调试：IP 设置的弹层
 const WIFI_IP_KEY = 'Log Record$$wifiIp';
 const wifiIpOpen = ref(false);
+
+/** 设备列表里的无线设备（serial 形如 ip:5555）；没有就是空串 */
+const wirelessDevice = computed(
+  () => devices.value.find((d) => /:\d+$/.test(d.serial))?.serial || '',
+);
 const saveWifiIp = () => {
   localStorage.setItem(WIFI_IP_KEY, wifiIp.value.trim());
   wifiIpOpen.value = false;
@@ -1172,6 +1178,36 @@ async function connectWifi() {
     } else {
       message.error(res.message);
     }
+  } finally {
+    busyWifi.value = false;
+  }
+}
+
+/** 断开无线连接；如果当前用的就是它，切回 USB 设备（否则界面会停在已不存在的设备上） */
+async function disconnectWifi() {
+  const target = wirelessDevice.value;
+  if (!target) return;
+  busyWifi.value = true;
+  try {
+    const res = await api.adbDisconnect(target);
+    pushLog(
+      `$ adb disconnect ${target}\n${res.raw || res.message}`,
+      res.ok ? 'ok' : 'err',
+    );
+    if (!res.ok) {
+      message.error(res.message);
+      return;
+    }
+    message.success(res.message);
+    // 如果当前用的就是它，切回 USB 设备（否则界面会停在一台已经不存在的设备上）
+    const wasCurrent = currentSerial.value === target;
+    await loadDevices();
+    if (wasCurrent) {
+      const usb = devices.value.find((d) => !/:\d+$/.test(d.serial));
+      if (usb) await selectDevice(usb.serial);
+    }
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err));
   } finally {
     busyWifi.value = false;
   }
@@ -1759,6 +1795,21 @@ function deviceSubtitle(d: AdbDevice) {
                 </div>
               </div>
             </a-tooltip>
+            <span
+              v-if="wirelessDevice"
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
+              <div
+                class="tile-side-entry"
+                :class="{ 'tile-side-entry-off': busyWifi }"
+                @click="disconnectWifi"
+              >
+                <DisconnectOutlined class="tile-side-entry-icon" />
+                <div class="tile-side-entry-label">{{ $t('断开') }}</div>
+              </div>
+            </span>
           </div>
         </div>
 

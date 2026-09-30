@@ -37,6 +37,7 @@ import { loadWindowState, saveWindowState } from './utils/window-state';
 import {
   cancelInstall,
   connectWifi,
+  disconnectWifi,
   enableTcpip,
   findAapt,
   installApk,
@@ -743,6 +744,13 @@ const createWindow = () => {
       return connectWifi(info.file, payload.address, payload.port ?? 5555);
     },
   );
+
+  // 断开无线设备（用户在设备列表里看到的那台 ip:5555）
+  ipcMain.handle('adb:disconnect', async (_, payload: { address: string }) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+    return disconnectWifi(info.file, payload.address);
+  });
 
   // 通用 shell（输出面板的「自定义命令」用）
   ipcMain.handle(
