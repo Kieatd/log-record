@@ -169,6 +169,9 @@ const autoStayOnDone = new Set<string>();
 
 // 投屏面板常驻在右侧，不提供收起 —— 这就是想要的默认布局
 const mirrorRunning = ref(false);
+/** 自动切换无线时防止重入 */
+let autoSwitching = false;
+
 const mirrorRef = ref<{ start: () => void; stop: () => Promise<void> } | null>(
   null,
 );
@@ -206,8 +209,149 @@ async function loadAdb() {
   adb.value = await api.adbInfo();
 }
 
+/**
+ * 同一台手机的 USB 和 WiFi 是 adb 里的两条记录（`device` 代号相同，比如都是 HWBND-H）。
+ * 以前会显示成两张一模一样的卡片，容易看懵 —— 这里合并成一张，配一个 USB/WiFi 切换。
+ */
+const deviceGroups = computed(() => {
+  type Group = {
+    key: string;
+    label: string;
+    brand: string;
+    androidVersion: string;
+    usb?: AdbDevice;
+    wifi?: AdbDevice;
+    best: AdbDevice;
+  };
+  const map = new Map<string, Group>();
+  for (const d of devices.value) {
+    const key = d.device || d.model || d.serial;
+    let g = map.get(key);
+    if (!g) {
+      g = {
+        key,
+        label: d.model || d.serial,
+        brand: d.brand || '',
+        androidVersion: d.androidVersion || '',
+        best: d,
+      };
+      map.set(key, g);
+    }
+    if (d.connection === 'wifi') g.wifi = d;
+    else g.usb = d;
+    if (d.state === 'device') g.best = d;
+    if (!g.brand && d.brand) g.brand = d.brand;
+    if (!g.androidVersion && d.androidVersion)
+      g.androidVersion = d.androidVersion;
+  }
+  return [...map.values()];
+});
+
+/** 这张卡当前用哪条通道 */
+function activeTransport(g: {
+  usb?: AdbDevice;
+  wifi?: AdbDevice;
+}): 'usb' | 'wifi' {
+  if (g.wifi && g.wifi.serial === currentSerial.value) return 'wifi';
+  if (g.usb && g.usb.serial === currentSerial.value) return 'usb';
+  return g.usb ? 'usb' : 'wifi';
+}
+
+/** 卡片副标题：品牌 · Android 版本（通道由切换器表示，不在这里重复） */
+function groupSubtitle(g: {
+  label: string;
+  brand: string;
+  androidVersion: string;
+}): string {
+  const parts: string[] = [];
+  if (g.brand) parts.push(g.brand);
+  if (g.androidVersion) parts.push(`Android ${g.androidVersion}`);
+  if (!parts.length) parts.push(g.label);
+  return parts.join(' · ');
+}
+
+/**
+ * 切换这台手机的传输方式。
+ * USB → 直接切过去；WiFi 已经连过 → 切过去；
+ * WiFi 还没连 → 插着线的话顺手开好（先读 IP 再 tcpip，再 connect），然后切过去。
+ */
+async function switchTransport(
+  g: { usb?: AdbDevice; wifi?: AdbDevice },
+  t: 'usb' | 'wifi',
+) {
+  if (t === 'usb') {
+    if (!g.usb) {
+      message.warning(i18n.t('没插数据线，切不回 USB'));
+      return;
+    }
+    if (currentSerial.value !== g.usb.serial) await selectDevice(g.usb.serial);
+    return;
+  }
+  if (g.wifi) {
+    if (currentSerial.value !== g.wifi.serial)
+      await selectDevice(g.wifi.serial);
+    return;
+  }
+  if (!g.usb) {
+    message.warning(i18n.t('要先插数据线才能开启无线调试'));
+    return;
+  }
+  // WiFi 还没连上：插着线的这台，一步开好
+  busyWifi.value = true;
+  try {
+    let phoneIp = '';
+    try {
+      const ipRes = await api.adbShell(
+        'ip -f inet addr show wlan0',
+        g.usb.serial,
+      );
+      const ipText = String(ipRes.message || '');
+      const m =
+        ipText.match(/src\s+(\d+\.\d+\.\d+\.\d+)/) ||
+        ipText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
+      if (m) phoneIp = m[1];
+    } catch {
+      /* 取不到就让用户手动填 */
+    }
+    const res = await api.adbTcpip(g.usb.serial, 5555);
+    pushLog(
+      res.raw ? `$ adb tcpip 5555\n${res.raw}` : res.message,
+      res.ok ? 'ok' : 'err',
+    );
+    if (!res.ok) {
+      message.error(res.message);
+      return;
+    }
+    if (!phoneIp) phoneIp = wifiIp.value.trim();
+    if (!phoneIp) {
+      message.warning(i18n.t('没读到手机 IP，请用 ⚙ 手动填'));
+      return;
+    }
+    wifiIp.value = phoneIp;
+    localStorage.setItem(WIFI_IP_KEY, phoneIp);
+    const conn = await api.adbConnect(phoneIp, 5555);
+    pushLog(
+      `$ adb connect ${phoneIp}:5555\n${conn.raw || conn.message}`,
+      conn.ok ? 'ok' : 'err',
+    );
+    if (!conn.ok) {
+      message.error(conn.message);
+      return;
+    }
+    message.success(conn.message);
+    await loadDevices();
+    const wifi = devices.value.find((d) => d.connection === 'wifi');
+    if (wifi) await selectDevice(wifi.serial);
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    busyWifi.value = false;
+  }
+}
+
 async function loadDevices() {
   loadingDevices.value = true;
+  const prevSerial = currentSerial.value;
   try {
     const res = await api.adbDevices();
     devices.value = res.devices || [];
@@ -228,6 +372,90 @@ async function loadDevices() {
     }
   } finally {
     loadingDevices.value = false;
+  }
+  // 拔线了？同一台手机的无线还在的话，自动切过去并把投屏接上
+  if (prevSerial && prevSerial !== currentSerial.value) {
+    void handoffToWifi(prevSerial);
+  }
+  // 手机一插上（或列表刷新）就顺手把无线也连上 —— 不用每次手点「连接」
+  void autoConnectWifi();
+}
+
+/**
+ * 拔线自动切无线（只做 USB → WiFi 这个方向）。
+ *
+ * 触发点很巧：拔线会让 scrcpy 会话立刻结束 → 投屏组件 emit 出 running=false →
+ * 我们顺手刷新一次设备列表 → 发现"当前用的那台"没了、列表自动选中了别的（那台就是无线）
+ * → 于是把投屏在新设备上重新开一次。
+ *
+ * 为什么不在"无线断了"时反向自动切回 USB：用户可能刚点了「断开」，那是有意为之。
+ */
+async function handoffToWifi(prevSerial: string) {
+  if (autoSwitching) return;
+  const now = currentSerial.value;
+  if (!/:\d+$/.test(now) || /:\d+$/.test(prevSerial)) return;
+  autoSwitching = true;
+  try {
+    pushLog(`USB 断开，自动切到无线 ${now}`, 'info');
+    message.info(i18n.t('数据线断了，已自动切到无线'));
+    await new Promise((r) => setTimeout(r, 800));
+    mirrorRef.value?.start();
+    pushLog('投屏已接到无线上（自动用省流模式）', 'info');
+  } finally {
+    autoSwitching = false;
+  }
+}
+
+/**
+ * 自动连无线。
+ *
+ * 触发时机：设备列表刷新（插线 / 切设备 / 手动刷新）之后。
+ * 条件：本地存过无线 IP、列表里还没有无线设备、当前至少有一台"带线的"设备。
+ * 连不上时（常见原因：手机 DHCP 换了 IP）会从插着线的那台手机**重新读一次 IP**、
+ * 更新本地值再重试一遍。
+ */
+let autoWifiBusy = false;
+let autoWifiLastTry = 0;
+async function autoConnectWifi() {
+  const savedIp = wifiIp.value.trim();
+  if (!savedIp || autoWifiBusy) return;
+  if (Date.now() - autoWifiLastTry < 5000) return; // 失败时别刷太快
+  if (devices.value.some((d) => /:\d+$/.test(d.serial))) return; // 已经连着无线
+  const usb = devices.value.find((d) => !/:\d+$/.test(d.serial));
+  if (!usb) return; // 没插线就先不动（无线 IP 也读不到）
+
+  autoWifiBusy = true;
+  autoWifiLastTry = Date.now();
+  try {
+    const res = await api.adbConnect(savedIp, 5555);
+    pushLog(
+      `$ adb connect ${savedIp}:5555\n${res.raw || res.message}`,
+      res.ok ? 'ok' : 'err',
+    );
+    if (res.ok) {
+      await loadDevices();
+      return;
+    }
+    // 连不上：IP 很可能变了（DHCP），从插着线的手机重新读
+    const ipRes = await api.adbShell('ip -f inet addr show wlan0', usb.serial);
+    const ipText = String(ipRes.message || '');
+    const m =
+      ipText.match(/src\s+(\d+\.\d+\.\d+\.\d+)/) ||
+      ipText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
+    if (!m || m[1] === savedIp) return;
+    wifiIp.value = m[1];
+    localStorage.setItem(WIFI_IP_KEY, m[1]);
+    pushLog(`手机 IP 变了：${savedIp} → ${m[1]}，重试连接`, 'info');
+    const again = await api.adbConnect(m[1], 5555);
+    pushLog(
+      `$ adb connect ${m[1]}:5555\n${again.raw || again.message}`,
+      again.ok ? 'ok' : 'err',
+    );
+    if (again.ok) await loadDevices();
+  } catch {
+    /* 自动重连失败不打扰用户，下次刷新再试 */
+  } finally {
+    autoWifiBusy = false;
   }
 }
 
@@ -1476,23 +1704,43 @@ function deviceSubtitle(d: AdbDevice) {
         class="device-list"
       >
         <div
-          v-for="d in devices"
-          :key="d.serial"
+          v-for="g in deviceGroups"
+          :key="g.key"
           class="device-card"
-          :class="{ 'device-card-active': d.serial === currentSerial }"
-          @click="selectDevice(d.serial)"
+          :class="{
+            'device-card-active':
+              activeTransport(g) &&
+              [g.usb, g.wifi].some((x) => x && x.serial === currentSerial),
+          }"
+          @click="switchTransport(g, activeTransport(g))"
         >
           <MobileOutlined class="device-icon" />
           <div class="device-info">
-            <div class="device-name">{{ deviceTitle(d) }}</div>
-            <div class="device-sub">{{ deviceSubtitle(d) }}</div>
+            <div class="device-name">{{ g.label }}</div>
+            <div class="device-sub">{{ groupSubtitle(g) }}</div>
+            <a-radio-group
+              class="device-transport"
+              size="small"
+              button-style="solid"
+              :value="activeTransport(g)"
+              @click.stop
+              @change="(e: any) => switchTransport(g, e.target.value)"
+            >
+              <a-radio-button
+                value="usb"
+                :disabled="!g.usb"
+              >
+                USB
+              </a-radio-button>
+              <a-radio-button value="wifi">WiFi</a-radio-button>
+            </a-radio-group>
           </div>
           <div
             class="device-state"
-            :class="'state-' + d.state"
+            :class="'state-' + g.best.state"
           >
-            <component :is="stateIcon(d.state)" />
-            <span>{{ stateText(d.state) }}</span>
+            <component :is="stateIcon(g.best.state)" />
+            <span>{{ stateText(g.best.state) }}</span>
           </div>
         </div>
       </div>
@@ -2519,7 +2767,12 @@ function deviceSubtitle(d: AdbDevice) {
         ref="mirrorRef"
         :serial="currentSerial"
         @log="(t: string) => pushLog(t)"
-        @running="(v: boolean) => (mirrorRunning = v)"
+        @running="
+          (v: boolean) => {
+            mirrorRunning = v;
+            if (!v) void loadDevices();
+          }
+        "
       />
     </div>
   </div>
@@ -2659,6 +2912,10 @@ function deviceSubtitle(d: AdbDevice) {
   font-size: 20px;
   color: #336666;
 }
+.device-transport {
+  margin-top: 6px;
+}
+
 .device-info {
   flex: 1;
   min-width: 0;
