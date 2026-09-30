@@ -10,7 +10,7 @@ import {
   screen,
 } from 'electron';
 import fs from 'fs';
-import { fillDebugUrl } from './utils/uiauto';
+import { fillDebugUrl, openFolderOnPhone } from './utils/uiauto';
 import { startMonkey, stopMonkey } from './utils/monkey';
 import { isStressRunning, startStress, stopStress } from './utils/stress';
 import { cancelPush, pushFiles } from './utils/push';
@@ -45,7 +45,6 @@ import {
   listDevices,
   listPackages,
   loadCustomAdbPath,
-  openFolderOnPhone,
   getInstallConfirm,
   setInstallConfirm,
   readInstallTimes,
@@ -65,7 +64,10 @@ if (process.platform === 'win32' && started) app.quit();
 
 const createWindow = () => {
   // 窗口大小/位置存到 userData/window-state.json，下次打开沿用
-  const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
+  const windowStateFile = path.join(
+    app.getPath('userData'),
+    'window-state.json',
+  );
   const { maximized, ...savedBounds } = loadWindowState(
     windowStateFile,
     screen.getAllDisplays(),
@@ -131,49 +133,6 @@ const createWindow = () => {
     checkForUpgrade(author.name, name, version),
   );
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   ipcMain.on('openUrl', (_, url) => {
     shell.openExternal(url);
   });
@@ -231,15 +190,19 @@ const createWindow = () => {
     return { ok: true, value: await getInstallConfirm(info.file, serial) };
   });
 
-  ipcMain.handle('adb:setInstallConfirm', async (_, payload: { on: boolean; serial?: string }) => {
-    const info = currentAdb();
-    if (!info.found) return { ok: false, message: '没找到 adb' };
-    return setInstallConfirm(info.file, payload.on, payload.serial);
-  });
+  ipcMain.handle(
+    'adb:setInstallConfirm',
+    async (_, payload: { on: boolean; serial?: string }) => {
+      const info = currentAdb();
+      if (!info.found) return { ok: false, message: '没找到 adb' };
+      return setInstallConfirm(info.file, payload.on, payload.serial);
+    },
+  );
 
   ipcMain.handle('adb:devices', async () => {
     const info = currentAdb();
-    if (!info.found) return { ok: false, message: info.error || '没找到 adb', devices: [] };
+    if (!info.found)
+      return { ok: false, message: info.error || '没找到 adb', devices: [] };
     const devices = await listDevices(info.file);
     return { ok: true, devices };
   });
@@ -256,7 +219,8 @@ const createWindow = () => {
       },
     ) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       const send = (text: string) => {
         if (payload.taskId) {
           mainWindow.webContents.send('adb:output', {
@@ -406,7 +370,10 @@ const createWindow = () => {
       fs.unlinkSync(shotPath(name));
       return { ok: true };
     } catch (err) {
-      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      };
     }
   });
 
@@ -460,7 +427,8 @@ const createWindow = () => {
     'adb:openFolder',
     async (_, payload: { folder: string; serial?: string }) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return openFolderOnPhone(info.file, payload.folder, payload.serial);
     },
   );
@@ -471,7 +439,8 @@ const createWindow = () => {
     'app:restart',
     async (_, payload: { packageName: string; serial?: string }) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return restartApp(info.file, payload.packageName, payload.serial);
     },
   );
@@ -493,14 +462,16 @@ const createWindow = () => {
       },
     ) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb', steps: [] };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb', steps: [] };
       return fillDebugUrl(info.file, payload);
     },
   );
 
   ipcMain.handle('adb:installTimes', async (_, serial?: string) => {
     const info = currentAdb();
-    if (!info.found) return { ok: false, message: info.error || '没找到 adb', times: {} };
+    if (!info.found)
+      return { ok: false, message: info.error || '没找到 adb', times: {} };
     return readInstallTimes(info.file, serial);
   });
 
@@ -508,23 +479,39 @@ const createWindow = () => {
   // 主进程负责抽出相关文件、拼最小 zip 再交给 aapt，渲染层只管收结果。
   ipcMain.handle(
     'adb:appLabels',
-    async (_, payload: { items: { packageName: string; apkPath: string }[]; serial?: string }) => {
+    async (
+      _,
+      payload: {
+        items: { packageName: string; apkPath: string }[];
+        serial?: string;
+      },
+    ) => {
       const info = currentAdb();
       if (!info.found) return { ok: false, labels: [] };
       const aapt = findAapt(info.file);
-      if (!aapt) return { ok: false, message: '没找到 aapt，读不到应用名', labels: [] };
-      const labels = await readInstalledAppLabels(info.file, aapt, payload.items || [], {
-        serial: payload.serial,
-      });
+      if (!aapt)
+        return { ok: false, message: '没找到 aapt，读不到应用名', labels: [] };
+      const labels = await readInstalledAppLabels(
+        info.file,
+        aapt,
+        payload.items || [],
+        {
+          serial: payload.serial,
+        },
+      );
       return { ok: true, labels };
     },
   );
 
   ipcMain.handle(
     'adb:uninstall',
-    async (_, payload: { packageName: string; serial?: string; keepData?: boolean }) => {
+    async (
+      _,
+      payload: { packageName: string; serial?: string; keepData?: boolean },
+    ) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return uninstallApp(info.file, payload.packageName, {
         serial: payload.serial,
         keepData: payload.keepData,
@@ -547,9 +534,13 @@ const createWindow = () => {
 
   ipcMain.handle(
     'scrcpy:start',
-    async (_, payload: { serial?: string; maxSize?: number; maxFps?: number }) => {
+    async (
+      _,
+      payload: { serial?: string; maxSize?: number; maxFps?: number },
+    ) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return startScrcpy({
         serial: payload?.serial,
         serverFile: scrcpyServerFile,
@@ -605,7 +596,8 @@ const createWindow = () => {
       },
     ) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return startMonkey(info.file, {
         ...payload,
         onOutput: (line) => mainWindow.webContents.send('monkey:output', line),
@@ -631,14 +623,16 @@ const createWindow = () => {
       },
     ) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return startStress(info.file, {
         ...payload,
         onOutput: (line) => mainWindow.webContents.send('stress:output', line),
         onProgress: (done, total) =>
           mainWindow.webContents.send('stress:progress', { done, total }),
         onEscaped: (top) => mainWindow.webContents.send('stress:escaped', top),
-        onClose: (reason) => mainWindow.webContents.send('stress:closed', reason),
+        onClose: (reason) =>
+          mainWindow.webContents.send('stress:closed', reason),
       });
     },
   );
@@ -668,10 +662,16 @@ const createWindow = () => {
     'push:files',
     async (
       _,
-      payload: { paths: string[]; dest?: string; serial?: string; taskId?: string },
+      payload: {
+        paths: string[];
+        dest?: string;
+        serial?: string;
+        taskId?: string;
+      },
     ) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return pushFiles(info.file, payload.paths || [], {
         serial: payload.serial,
         taskId: payload.taskId,
@@ -679,7 +679,10 @@ const createWindow = () => {
         onOutput: (line) => mainWindow.webContents.send('push:output', line),
         onProgress: (p) => {
           if (payload.taskId) {
-            mainWindow.webContents.send('push:progress', { taskId: payload.taskId, ...p });
+            mainWindow.webContents.send('push:progress', {
+              taskId: payload.taskId,
+              ...p,
+            });
           }
         },
       });
@@ -730,7 +733,10 @@ const createWindow = () => {
       });
       if (result.canceled || !result.filePath) return { canceled: true };
       const base64 = payload.dataUrl.replace(/^data:image\/\w+;base64,/, '');
-      await fs.promises.writeFile(result.filePath, Buffer.from(base64, 'base64'));
+      await fs.promises.writeFile(
+        result.filePath,
+        Buffer.from(base64, 'base64'),
+      );
       return { canceled: false, filePath: result.filePath };
     },
   );
@@ -739,7 +745,8 @@ const createWindow = () => {
     'adb:tcpip',
     async (_, payload: { serial?: string; port?: number }) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return enableTcpip(info.file, payload.serial, payload.port ?? 5555);
     },
   );
@@ -748,7 +755,8 @@ const createWindow = () => {
     'adb:connect',
     async (_, payload: { address: string; port?: number }) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       return connectWifi(info.file, payload.address, payload.port ?? 5555);
     },
   );
@@ -758,7 +766,8 @@ const createWindow = () => {
     'adb:shell',
     async (_, payload: { command: string; serial?: string }) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       const args = ['shell', ...payload.command.split(' ').filter(Boolean)];
       if (payload.serial) args.unshift('-s', payload.serial);
       const res = await runAdb(info.file, args, { timeout: 30000 });
@@ -789,7 +798,8 @@ const createWindow = () => {
       },
     ) => {
       const info = currentAdb();
-      if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
       const args = [
         'shell',
         'input',
@@ -902,7 +912,7 @@ const createWindow = () => {
       },
       '/network': (msg) => {
         mainWindow.webContents.send('network:msg', msg);
-      }
+      },
     });
   });
 

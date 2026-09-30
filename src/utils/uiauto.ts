@@ -85,7 +85,9 @@ export async function dumpUi(
   const cat = await runAdb(file, [...base, 'exec-out', 'cat', remote], {
     timeout: 20000,
   });
-  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 10000 });
+  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], {
+    timeout: 10000,
+  });
   if (!cat.stdout.includes('<hierarchy')) {
     return { ok: false, nodes: [], message: '读出来的界面结构不对' };
   }
@@ -94,16 +96,22 @@ export async function dumpUi(
 
 /** 找文字（text 或 content-desc），取面积最小的那个（最具体） */
 export function findText(nodes: UiNode[], text: string): UiNode | null {
-  const hits = nodes.filter((n) => n.text.trim() === text || n.desc.trim() === text);
+  const hits = nodes.filter(
+    (n) => n.text.trim() === text || n.desc.trim() === text,
+  );
   if (!hits.length) return null;
   return hits.slice().sort((a, b) => area(a) - area(b))[0];
 }
 
 /** 往下滑一屏（滚动页面） */
 async function swipeUp(file: string, base: string[]): Promise<void> {
-  await runAdb(file, [...base, 'shell', 'input', 'swipe', '540', '1600', '540', '700', '300'], {
-    timeout: 15000,
-  });
+  await runAdb(
+    file,
+    [...base, 'shell', 'input', 'swipe', '540', '1600', '540', '700', '300'],
+    {
+      timeout: 15000,
+    },
+  );
 }
 
 /**
@@ -139,8 +147,6 @@ export async function gotoDebugPage(
     return { ok: true, message: '已在调试页', steps: log };
   }
 
-
-
   const walk = async () => {
     for (const step of options.steps) {
       const d = await dumpUi(file, options.serial);
@@ -167,9 +173,13 @@ export async function gotoDebugPage(
         continue;
       }
       const c = centerOf(hit);
-      await runAdb(file, [...base, 'shell', 'input', 'tap', String(c[0]), String(c[1])], {
-        timeout: 15000,
-      });
+      await runAdb(
+        file,
+        [...base, 'shell', 'input', 'tap', String(c[0]), String(c[1])],
+        {
+          timeout: 15000,
+        },
+      );
       log.push(`点了「${step}」（${c.join(',')}）`);
       await new Promise((r) => setTimeout(r, waitMs));
     }
@@ -180,16 +190,25 @@ export async function gotoDebugPage(
 
   if (options.packageName) {
     log.push('第一次没走到，重启 App 回到首页再试一次');
-    await runAdb(file, [...base, 'shell', 'am', 'force-stop', options.packageName], {
-      timeout: 15000,
-    });
+    await runAdb(
+      file,
+      [...base, 'shell', 'am', 'force-stop', options.packageName],
+      {
+        timeout: 15000,
+      },
+    );
     await launchApp(file, options.packageName, { serial: options.serial });
     await new Promise((r) => setTimeout(r, 5000));
     for (let i = 0; i < 5; i++) await swipeDown(file, base);
     await new Promise((r) => setTimeout(r, 400));
-    if (await walk()) return { ok: true, message: '重启后走到了调试页', steps: log };
+    if (await walk())
+      return { ok: true, message: '重启后走到了调试页', steps: log };
   }
-  return { ok: false, message: '没能自动走到调试页，请手动打开后再试', steps: log };
+  return {
+    ok: false,
+    message: '没能自动走到调试页，请手动打开后再试',
+    steps: log,
+  };
 }
 
 /** 找一个输入框（优先当前已聚焦的） */
@@ -242,7 +261,10 @@ export function findButtonNear(
  *
  * 也不用 uiautomator：toast 是独立窗口，不在当前窗口的层级里，dump 看不到。
  */
-export async function countToastLines(file: string, serial?: string): Promise<number> {
+export async function countToastLines(
+  file: string,
+  serial?: string,
+): Promise<number> {
   const base = serial ? ['-s', serial] : [];
   // 关键：在【手机上】数，只把数字传回来。
   // 把整个 dumpsys 拉回电脑要好几 MB、2 秒以上，而 toast 只活 0.5 秒 ——
@@ -309,8 +331,16 @@ export function clearCoordCache(): void {
 
 /** 数字和点号的键码，用来把 IPv4 直接按键打进去 */
 const DIGIT_KEYCODE: Record<string, number> = {
-  '0': 7, '1': 8, '2': 9, '3': 10, '4': 11,
-  '5': 12, '6': 13, '7': 14, '8': 15, '9': 16,
+  '0': 7,
+  '1': 8,
+  '2': 9,
+  '3': 10,
+  '4': 11,
+  '5': 12,
+  '6': 13,
+  '7': 14,
+  '8': 15,
+  '9': 16,
   '.': 56,
 };
 
@@ -437,7 +467,8 @@ export async function fillDebugUrl(
       screenKey: options.screenKey,
     });
     for (const l of nav.steps) steps.push(`[导航] ${l}`);
-    if (!nav.ok) return done({ ok: false, message: nav.message, steps, actual: '' });
+    if (!nav.ok)
+      return done({ ok: false, message: nav.message, steps, actual: '' });
   }
 
   // ---- 快路径：坐标有缓存，一条 shell 命令全做完 ----
@@ -458,7 +489,9 @@ export async function fillDebugUrl(
       { serial: options.serial },
     );
     steps.push('用缓存坐标直接完成（点击/清空/输入/点按钮）');
-    steps.push(gotToastFast ? '检测到 App 弹出了提示 ✅' : '没检测到提示（可能没点到）');
+    steps.push(
+      gotToastFast ? '检测到 App 弹出了提示 ✅' : '没检测到提示（可能没点到）',
+    );
     lastFilledIp.set(options.serial || '', options.ip.trim());
     return done({
       ok: true,
@@ -472,9 +505,13 @@ export async function fillDebugUrl(
   // ---- 慢路径（第一次）：先唤醒屏幕 ----
   // 息屏时 uiautomator 拿到的是空结构，会误报「没找到输入框」，
   // 所以先点亮，并且把屏幕状态单独报出来（息屏/锁屏是最常见的失败原因）
-  await runAdb(file, [...base, 'shell', 'input', 'keyevent', '224'], { timeout: 10000 });
+  await runAdb(file, [...base, 'shell', 'input', 'keyevent', '224'], {
+    timeout: 10000,
+  });
 
-  const wake = await runAdb(file, [...base, 'shell', 'dumpsys', 'power'], { timeout: 15000 });
+  const wake = await runAdb(file, [...base, 'shell', 'dumpsys', 'power'], {
+    timeout: 15000,
+  });
   const awake = /mWakefulness=Awake/.test(wake.stdout + wake.stderr);
   if (!awake) {
     return done({
@@ -487,13 +524,19 @@ export async function fillDebugUrl(
 
   const first = await dumpUi(file, options.serial);
   if (!first.ok) {
-    return done({ ok: false, message: first.message || '读不到界面', steps, actual: '' });
+    return done({
+      ok: false,
+      message: first.message || '读不到界面',
+      steps,
+      actual: '',
+    });
   }
   const input = findInput(first.nodes);
   if (!input) {
     return done({
       ok: false,
-      message: '当前界面上没找到输入框 —— 确认手机上打开的是 App 的调试页（填调试Url那个页面）',
+      message:
+        '当前界面上没找到输入框 —— 确认手机上打开的是 App 的调试页（填调试Url那个页面）',
       steps,
       actual: '',
     });
@@ -509,7 +552,9 @@ export async function fillDebugUrl(
   }
   const inputCenter = centerOf(input);
   const btnCenter = centerOf(btn);
-  steps.push(`找到输入框 ${inputCenter.join(',')}、按钮「${buttonText}」${btnCenter.join(',')}`);
+  steps.push(
+    `找到输入框 ${inputCenter.join(',')}、按钮「${buttonText}」${btnCenter.join(',')}`,
+  );
 
   // 退格次数按当前内容长度来，不用固定 40 次
   const backspaces = Math.max(16, (input.text || '').length + 6);
@@ -517,7 +562,11 @@ export async function fillDebugUrl(
   // 先只做「点击 + 清空 + 输入」，然后回读校验，通过了再点按钮
   await runAdb(
     file,
-    [...base, 'shell', buildFillCommand(inputCenter, null, options.ip, backspaces)],
+    [
+      ...base,
+      'shell',
+      buildFillCommand(inputCenter, null, options.ip, backspaces),
+    ],
     { timeout: 30000 },
   );
   steps.push(`已点击输入框、清空（${backspaces} 次退格）、填入 ${options.ip}`);
@@ -541,7 +590,9 @@ export async function fillDebugUrl(
   const btnAfter = findButtonNear(second.nodes, after, buttonText) || btn;
   const tapCenter = centerOf(btnAfter);
   if (tapCenter[0] !== btnCenter[0] || tapCenter[1] !== btnCenter[1]) {
-    steps.push(`注意：按钮位置从 ${btnCenter.join(',')} 变到 ${tapCenter.join(',')}，按新的点`);
+    steps.push(
+      `注意：按钮位置从 ${btnCenter.join(',')} 变到 ${tapCenter.join(',')}，按新的点`,
+    );
   }
   // 点两次：第一次只是取消输入框的焦点，第二次才真正点到按钮（实测）
   const gotToast = await tapAndCheckToast(
@@ -549,20 +600,38 @@ export async function fillDebugUrl(
     async () => {
       await runAdb(
         file,
-        [...base, 'shell', 'input', 'tap', String(tapCenter[0]), String(tapCenter[1])],
+        [
+          ...base,
+          'shell',
+          'input',
+          'tap',
+          String(tapCenter[0]),
+          String(tapCenter[1]),
+        ],
         { timeout: 15000 },
       );
       await new Promise((r) => setTimeout(r, 500));
       await runAdb(
         file,
-        [...base, 'shell', 'input', 'tap', String(tapCenter[0]), String(tapCenter[1])],
+        [
+          ...base,
+          'shell',
+          'input',
+          'tap',
+          String(tapCenter[0]),
+          String(tapCenter[1]),
+        ],
         { timeout: 15000 },
       );
     },
     { serial: options.serial },
   );
-  steps.push(`已点「${buttonText}」（位置 ${tapCenter.join(',')}，点了两次：第一次取消焦点，第二次生效）`);
-  steps.push(gotToast ? '检测到 App 弹出了提示 ✅' : '没检测到提示（可能没点到）');
+  steps.push(
+    `已点「${buttonText}」（位置 ${tapCenter.join(',')}，点了两次：第一次取消焦点，第二次生效）`,
+  );
+  steps.push(
+    gotToast ? '检测到 App 弹出了提示 ✅' : '没检测到提示（可能没点到）',
+  );
   coordCache.set(cacheKey, { input: inputCenter, button: tapCenter });
   lastFilledIp.set(options.serial || '', options.ip.trim());
   steps.push('坐标已缓存，下次会快很多');
@@ -574,4 +643,246 @@ export async function fillDebugUrl(
     actual,
     gotToast,
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* 在手机上打开一个目录                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 在手机上打开一个目录。
+ *
+ * 分两种情况（这是踩出来的）：
+ *
+ * ① Android 8（API 26）及以上：一条命令直达
+ *    `OPEN_DOCUMENT` + `--eu android.provider.extra.INITIAL_URI <目录的 document URI>`
+ *    注意 EXTRA_INITIAL_URI 是 **Uri 类型**，必须用 `--eu`；用 `--es` 传 String，
+ *    对方 getParcelableExtra 读出来是 null —— 界面照常打开、只是安静地忽略路径。
+ *    另外要先 force-stop，否则文件管理器只把旧任务拉前台，新路径被丢掉。
+ *
+ * ② Android 7 及以下：**没有**能直接打开指定目录的入口
+ *    （EXTRA_INITIAL_URI 是 API 26 才加的；实测这台 HONOR/EMUI 上
+ *     DocumentsUI 无论给什么 URI 都停在「最近」、华为文件管理的
+ *     FileManager / DeepLinkActivity 也都会忽略路径）。
+ *    所以改成「打开文件管理器 → 用 uiautomator 找节点 → 注入点击，逐级进目录」。
+ *    实测这条路线能真正进到 /sdcard/Download（标记文件可见）。
+ *
+ * 文档 URI 的 id 要转义：`primary:Download/Camera` → `primary%3ADownload%2FCamera`
+ */
+
+/** 手机 API 版本 */
+async function sdkInt(file: string, base: string[]): Promise<number> {
+  const r = await runAdb(
+    file,
+    [...base, 'shell', 'getprop', 'ro.build.version.sdk'],
+    {
+      timeout: 10000,
+    },
+  );
+  return Number((r.stdout + r.stderr).trim()) || 0;
+}
+
+/** 点一下 */
+async function tapAt(
+  file: string,
+  base: string[],
+  x: number,
+  y: number,
+): Promise<void> {
+  await runAdb(
+    file,
+    [
+      ...base,
+      'shell',
+      'input',
+      'tap',
+      String(Math.round(x)),
+      String(Math.round(y)),
+    ],
+    { timeout: 15000 },
+  );
+}
+
+/**
+ * 按名字点中一层目录。
+ * 名字可能不是精确相等（列表里常带“12 项”“2026/09/11”之类的后缀），
+ * 所以先找完全相等的，再退回“包含”；同一批里取面积最小的那个（最具体）。
+ */
+function pickByName(nodes: UiNode[], name: string): UiNode | null {
+  const eq = nodes.filter(
+    (n) => n.text.trim() === name || n.desc.trim() === name,
+  );
+  const contains = nodes.filter(
+    (n) => n.text.includes(name) || n.desc.includes(name),
+  );
+  const pool = eq.length ? eq : contains;
+  if (!pool.length) return null;
+  return pool.slice().sort((a, b) => area(a) - area(b))[0];
+}
+
+/** 找不到就往下滑一屏再找（列表可能更长） */
+async function tapByName(
+  file: string,
+  base: string[],
+  names: string[],
+  serial: string | undefined,
+  steps: string[],
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const d = await dumpUi(file, serial);
+    if (!d.ok) return false;
+    for (const name of names) {
+      const node = pickByName(d.nodes, name);
+      if (node) {
+        const [x, y] = centerOf(node);
+        await tapAt(file, base, x, y);
+        steps.push(`点「${name}」（${x},${y}）`);
+        await new Promise((r) => setTimeout(r, 1600));
+        return true;
+      }
+    }
+    // 没找到 → 往下滑一屏
+    await runAdb(
+      file,
+      [...base, 'shell', 'input', 'swipe', '540', '1500', '540', '800', '300'],
+      { timeout: 15000 },
+    );
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  return false;
+}
+
+/** 各家文件管理器里「内部存储」的叫法 */
+const STORAGE_ROOT_NAMES = [
+  '我的手机',
+  '内部存储',
+  '内部共享存储空间',
+  'Internal storage',
+  'Phone',
+  'sdcard',
+  'SD 卡',
+];
+
+/**
+ * Android 8 以下：打开文件管理器，再注入点击逐级走进目标目录。
+ */
+async function navigateToFolder(
+  file: string,
+  base: string[],
+  dir: string,
+  serial: string | undefined,
+): Promise<{ ok: boolean; message: string; steps: string[] }> {
+  const steps: string[] = [];
+  // 华为文件管理（EMUI）优先；没有就用系统 DocumentsUI
+  const listed = await runAdb(
+    file,
+    [...base, 'shell', 'pm', 'list', 'packages', 'com.huawei.hidisk'],
+    { timeout: 15000 },
+  );
+  const huawei = listed.stdout.includes('com.huawei.hidisk');
+
+  await runAdb(
+    file,
+    [...base, 'shell', 'am', 'force-stop', 'com.huawei.hidisk'],
+    {
+      timeout: 15000,
+    },
+  );
+  const start = huawei
+    ? ['am', 'start', '-n', 'com.huawei.hidisk/.filemanager.FileManager']
+    : ['am', 'start', '-a', 'android.intent.action.VIEW_DOWNLOADS'];
+  await runAdb(file, [...base, 'shell', ...start], { timeout: 20000 });
+  steps.push(huawei ? '打开华为文件管理' : '打开系统文件管理');
+  await new Promise((r) => setTimeout(r, 2500));
+
+  // 逐级进入：内部存储 → Download → 子目录…
+  if (!(await tapByName(file, base, STORAGE_ROOT_NAMES, serial, steps))) {
+    return {
+      ok: false,
+      message: '没找到「内部存储」入口，可能界面改了',
+      steps,
+    };
+  }
+  const segs = dir
+    .replace(/^\/(?:sdcard|storage\/emulated\/0)\//, '')
+    .split('/')
+    .filter(Boolean);
+  for (const seg of segs) {
+    if (!(await tapByName(file, base, [seg], serial, steps))) {
+      return { ok: false, message: `没找到子目录「${seg}」`, steps };
+    }
+  }
+  return {
+    ok: true,
+    message: `已在手机上打开 ${dir}（这台手机系统较老，是"点进去"的）`,
+    steps,
+  };
+}
+
+export async function openFolderOnPhone(
+  file: string,
+  folder: string,
+  serial?: string,
+): Promise<{ ok: boolean; message: string; steps?: string[] }> {
+  const base = serial ? ['-s', serial] : [];
+  const dir = folder.endsWith('/') ? folder : `${folder}/`;
+
+  // 路径 → 文档 id
+  let docId: string | null = null;
+  const internal = dir.match(/^\/(?:sdcard|storage\/emulated\/0)\/(.*)$/);
+  if (internal) {
+    docId = `primary:${internal[1].replace(/\/+$/, '')}`;
+  } else {
+    const sd = dir.match(/^\/storage\/([0-9A-Fa-f]{4}-[0-9A-Fa-f]{4})\/(.*)$/);
+    if (sd) docId = `${sd[1]}:${sd[2].replace(/\/+$/, '')}`;
+  }
+
+  const sdk = await sdkInt(file, base);
+  if (sdk < 26) {
+    // Android 8 以下没有 INITIAL_URI（API 26 才有），只能点进去
+    return navigateToFolder(file, base, dir, serial);
+  }
+
+  if (!docId) {
+    return {
+      ok: false,
+      message: `暂不支持这个路径：${dir}（只支持内部存储和 SD 卡）`,
+    };
+  }
+  const uri = `content://com.android.externalstorage.documents/document/${encodeURIComponent(docId)}`;
+  await runAdb(
+    file,
+    [...base, 'shell', 'am', 'force-stop', 'com.android.documentsui'],
+    {
+      timeout: 15000,
+    },
+  );
+  const r = await runAdb(
+    file,
+    [
+      ...base,
+      'shell',
+      'am',
+      'start',
+      '-a',
+      'android.intent.action.OPEN_DOCUMENT',
+      '-c',
+      'android.intent.category.OPENABLE',
+      '-t',
+      'vnd.android.document/directory',
+      '--eu',
+      'android.provider.extra.INITIAL_URI',
+      uri,
+    ],
+    { timeout: 20000 },
+  );
+  const out = (r.stdout + r.stderr).trim();
+  if (r.code !== 0 || /unable to resolve/i.test(out)) {
+    return { ok: false, message: out || '打不开手机上的文件管理器' };
+  }
+  return {
+    ok: true,
+    message: `已在手机上打开 ${dir}`,
+    steps: [`文档 URI：${uri}`],
+  };
 }

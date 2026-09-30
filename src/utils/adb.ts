@@ -70,7 +70,8 @@ function sdkRoots(): string[] {
   if (process.platform === 'darwin') {
     roots.push(path.join(home, 'Library', 'Android', 'sdk'));
   } else if (process.platform === 'win32') {
-    const local = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const local =
+      process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
     roots.push(path.join(local, 'Android', 'Sdk'));
   } else {
     roots.push(path.join(home, 'Android', 'Sdk'));
@@ -102,7 +103,9 @@ export function listAdbCandidates(
   push(customPath || '', 'custom', '手动指定');
   if (bundledDir) push(path.join(bundledDir, EXE), 'bundled', '应用内置');
   for (const root of sdkRoots()) {
-    const isEnv = root === process.env.ANDROID_HOME || root === process.env.ANDROID_SDK_ROOT;
+    const isEnv =
+      root === process.env.ANDROID_HOME ||
+      root === process.env.ANDROID_SDK_ROOT;
     push(
       path.join(root, 'platform-tools', EXE),
       isEnv ? 'env' : 'sdk',
@@ -136,12 +139,14 @@ export function parseAdbVersion(output: string): string {
  * 找到第一个可用的 adb 并读出它的版本。
  * 找不到时 found=false，error 里带原因。
  */
-export function resolveAdb(options: {
-  customPath?: string;
-  bundledDir?: string;
-  /** 跳过版本探测（测试用） */
-  skipVersion?: boolean;
-} = {}): AdbInfo {
+export function resolveAdb(
+  options: {
+    customPath?: string;
+    bundledDir?: string;
+    /** 跳过版本探测（测试用） */
+    skipVersion?: boolean;
+  } = {},
+): AdbInfo {
   const candidates = listAdbCandidates(options.customPath, options.bundledDir);
   const none: AdbInfo = {
     found: false,
@@ -173,7 +178,11 @@ export function resolveAdb(options: {
         error: `指定的文件不是可用的 adb：${custom.file}`,
       };
     }
-    return { ...custom, found: true, version: parseAdbVersion(res.stdout + res.stderr) };
+    return {
+      ...custom,
+      found: true,
+      version: parseAdbVersion(res.stdout + res.stderr),
+    };
   }
 
   for (const c of candidates) {
@@ -210,7 +219,11 @@ function spawnAdb(file: string, args: string[], timeout = 20000) {
 }
 
 /** 同步跑一条 adb 命令（只在探测版本时用，会阻塞） */
-export function runAdbSync(file: string, args: string[], timeout = 8000): RunResult {
+export function runAdbSync(
+  file: string,
+  args: string[],
+  timeout = 8000,
+): RunResult {
   try {
     const stdout = execFileSync(file, args, {
       timeout,
@@ -247,7 +260,12 @@ export function runAdb(
     try {
       child = spawnAdb(file, args);
     } catch (err: any) {
-      resolve({ code: 1, stdout: '', stderr: err.message || String(err), timedOut: false });
+      resolve({
+        code: 1,
+        stdout: '',
+        stderr: err.message || String(err),
+        timedOut: false,
+      });
       return;
     }
     const timer = setTimeout(() => {
@@ -259,7 +277,12 @@ export function runAdb(
     child.stderr?.on('data', (d) => (stderr += d.toString()));
     child.on('error', (err) => {
       clearTimeout(timer);
-      resolve({ code: 1, stdout, stderr: stderr + (err.message || ''), timedOut });
+      resolve({
+        code: 1,
+        stdout,
+        stderr: stderr + (err.message || ''),
+        timedOut,
+      });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -284,7 +307,11 @@ export function runAdbBuffer(
     child.stderr?.on('data', (d) => (stderr += d.toString()));
     child.on('error', (err) => {
       clearTimeout(timer);
-      resolve({ code: 1, buffer: Buffer.concat(chunks), stderr: stderr + err.message });
+      resolve({
+        code: 1,
+        buffer: Buffer.concat(chunks),
+        stderr: stderr + err.message,
+      });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -332,7 +359,11 @@ export function parseDevices(output: string): AdbDevice[] {
     const state = parts[1] || 'unknown';
     if (!serial || !state) continue;
     // 只认已知状态，避免把提示文字当设备
-    if (!/^(device|unauthorized|offline|bootloader|recovery|sideload|no permissions)/.test(state)) {
+    if (
+      !/^(device|unauthorized|offline|bootloader|recovery|sideload|no permissions)/.test(
+        state,
+      )
+    ) {
       continue;
     }
 
@@ -418,7 +449,11 @@ export function parsePackages(output: string): string[] {
  */
 export async function listPackages(
   file: string,
-  options: { serial?: string; includeSystem?: boolean; withPaths?: boolean } = {},
+  options: {
+    serial?: string;
+    includeSystem?: boolean;
+    withPaths?: boolean;
+  } = {},
 ): Promise<{
   ok: boolean;
   message?: string;
@@ -470,13 +505,25 @@ export function firstMeaningfulLine(output: string): string {
 }
 
 /** 把 pm uninstall 的输出翻译成人话 */
-export function judgeUninstall(output: string): { ok: boolean; message: string } {
+export function judgeUninstall(output: string): {
+  ok: boolean;
+  message: string;
+} {
   const text = output.trim();
   if (/^Success/m.test(text)) return { ok: true, message: '卸载成功' };
   const known: [RegExp, string][] = [
-    [/Unknown package|IllegalArgumentException/, '这台设备上没装这个应用（可能已经被卸载了）'],
-    [/DELETE_FAILED_DEVICE_POLICY_MANAGER/, '这个应用是设备管理器，得先去「设置 → 安全 → 设备管理器」里取消勾选才能卸'],
-    [/DELETE_FAILED_INTERNAL_ERROR/, '系统内部错误，卸载失败。部分系统应用不允许卸载'],
+    [
+      /Unknown package|IllegalArgumentException/,
+      '这台设备上没装这个应用（可能已经被卸载了）',
+    ],
+    [
+      /DELETE_FAILED_DEVICE_POLICY_MANAGER/,
+      '这个应用是设备管理器，得先去「设置 → 安全 → 设备管理器」里取消勾选才能卸',
+    ],
+    [
+      /DELETE_FAILED_INTERNAL_ERROR/,
+      '系统内部错误，卸载失败。部分系统应用不允许卸载',
+    ],
     [/DELETE_FAILED_USER_RESTRICTED/, '系统限制了卸载'],
     [/DELETE_FAILED_OWNER_BLOCKED/, '应用被设备管理员阻止卸载'],
     [/not installed for/, '这台设备上没装这个应用'],
@@ -513,97 +560,6 @@ export async function uninstallApp(
 }
 
 /**
- * 在手机上打开一个目录。
- *
- * 一条命令直接到位，不点、不滚：
- *
- *   am force-stop com.android.documentsui
- *   am start -a android.intent.action.OPEN_DOCUMENT
- *     -c android.intent.category.OPENABLE
- *     -t vnd.android.document/directory
- *     --eu android.provider.extra.INITIAL_URI
- *        content://com.android.externalstorage.documents/document/primary%3A<文件夹>
- *
- * 两个关键点（都是踩出来的）：
- *
- * ① EXTRA_INITIAL_URI 是 **Uri 类型**，必须用 `--eu` 传。
- *    用 `--es`（String）传，对方 getParcelableExtra 读出来是 null ——
- *    界面照常打开、只是安静地忽略路径，看起来像"成功"了。
- *
- * ② 必须先 force-stop 文件管理器。
- *    它已经在后台时，Android 只把旧任务拉到前台，新的路径被丢掉 ——
- *    实测连续切三个目录，只有第一次生效，后两次都停在第一个目录。
- *    （0.1 秒的事，比"滚屏找目录再点"那 15 秒划算太多。）
- *
- * 文档 URI 的 id 要转义：`primary:Download/Camera` → `primary%3ADownload%2FCamera`
- * （encodeURIComponent 正好干这个）
- *
- * 别的方式都试过、这条机器上不行，留个记录：
- *   ✗ file:///sdcard/Download/        → DocumentsUI 忽略路径，停在「下载」分类页
- *   ✗ content://…/document/… 配 VIEW  → DocumentsUI 直接崩
- *   ✗ 三星 MyFiles 带什么参数都没用    → 它的 intent filter 里没有 VIEW+file
- */
-export async function openFolderOnPhone(
-  file: string,
-  folder: string,
-  serial?: string,
-): Promise<{ ok: boolean; message: string; steps?: string[] }> {
-  const base = serial ? ['-s', serial] : [];
-  const dir = folder.endsWith('/') ? folder : `${folder}/`;
-
-  // 路径 → 文档 id
-  let docId: string | null = null;
-  const internal = dir.match(/^\/(?:sdcard|storage\/emulated\/0)\/(.*)$/);
-  if (internal) {
-    docId = `primary:${internal[1].replace(/\/+$/, '')}`;
-  } else {
-    // 外置 SD：/storage/XXXX-XXXX/xxx → XXXX-XXXX:xxx
-    const sd = dir.match(/^\/storage\/([0-9A-Fa-f]{4}-[0-9A-Fa-f]{4})\/(.*)$/);
-    if (sd) docId = `${sd[1]}:${sd[2].replace(/\/+$/, '')}`;
-  }
-  if (!docId) {
-    return { ok: false, message: `暂不支持这个路径：${dir}（只支持内部存储和 SD 卡）` };
-  }
-
-  const uri = `content://com.android.externalstorage.documents/document/${encodeURIComponent(docId)}`;
-
-  // ① 先关掉文件管理器，否则新路径会被丢掉（见上面②）
-  await runAdb(file, [...base, 'shell', 'am', 'force-stop', 'com.android.documentsui'], {
-    timeout: 15000,
-  });
-
-  // ② 一条命令直接开到那个目录
-  const r = await runAdb(
-    file,
-    [
-      ...base,
-      'shell',
-      'am',
-      'start',
-      '-a',
-      'android.intent.action.OPEN_DOCUMENT',
-      '-c',
-      'android.intent.category.OPENABLE',
-      '-t',
-      'vnd.android.document/directory',
-      '--eu',
-      'android.provider.extra.INITIAL_URI',
-      uri,
-    ],
-    { timeout: 20000 },
-  );
-  const out = (r.stdout + r.stderr).trim();
-  if (r.code !== 0 || /unable to resolve|Error/i.test(out)) {
-    return { ok: false, message: out || '打不开手机上的文件管理器' };
-  }
-  return {
-    ok: true,
-    message: `已在手机上打开 ${dir}`,
-    steps: [`文档 URI：${uri}`],
-  };
-}
-
-/**
  * 读手机上的「adb 安装应用需要确认」开关（secure 设置，各家 ROM 都有）。
  *
  * 实测（HONOR BND-AL10 / Android 7 / EMUI 5）：
@@ -612,11 +568,18 @@ export async function openFolderOnPhone(
  *   改成 0 之后同一条命令直接 Success，手机上什么都不弹。
  * （三星 SM-G9500 上这个值本来就是 0，所以一直是静默安装。）
  */
-export async function getInstallConfirm(file: string, serial?: string): Promise<boolean | null> {
+export async function getInstallConfirm(
+  file: string,
+  serial?: string,
+): Promise<boolean | null> {
   const base = serial ? ['-s', serial] : [];
-  const r = await runAdb(file, [...base, 'shell', 'settings', 'get', 'secure', 'adb_install_need_confirm'], {
-    timeout: 15000,
-  });
+  const r = await runAdb(
+    file,
+    [...base, 'shell', 'settings', 'get', 'secure', 'adb_install_need_confirm'],
+    {
+      timeout: 15000,
+    },
+  );
   const v = (r.stdout || '').trim();
   if (v === '0') return false;
   if (v === '1') return true;
@@ -632,7 +595,15 @@ export async function setInstallConfirm(
   const base = serial ? ['-s', serial] : [];
   const r = await runAdb(
     file,
-    [...base, 'shell', 'settings', 'put', 'secure', 'adb_install_need_confirm', on ? '1' : '0'],
+    [
+      ...base,
+      'shell',
+      'settings',
+      'put',
+      'secure',
+      'adb_install_need_confirm',
+      on ? '1' : '0',
+    ],
     { timeout: 15000 },
   );
   const out = (r.stdout + r.stderr).trim();
@@ -659,9 +630,13 @@ export async function restartApp(
   serial?: string,
 ): Promise<{ ok: boolean; message: string }> {
   const base = serial ? ['-s', serial] : [];
-  const stop = await runAdb(file, [...base, 'shell', 'am', 'force-stop', packageName], {
-    timeout: 15000,
-  });
+  const stop = await runAdb(
+    file,
+    [...base, 'shell', 'am', 'force-stop', packageName],
+    {
+      timeout: 15000,
+    },
+  );
   if (stop.code !== 0) {
     return {
       ok: false,
@@ -753,7 +728,9 @@ function looksLikeEntry(entry: string, buf: Buffer): boolean {
   if (buf.length < 4) return false;
   if (entry === 'AndroidManifest.xml') {
     // 二进制 XML: 03 00 08 00
-    return buf[0] === 0x03 && buf[1] === 0x00 && buf[2] === 0x08 && buf[3] === 0x00;
+    return (
+      buf[0] === 0x03 && buf[1] === 0x00 && buf[2] === 0x08 && buf[3] === 0x00
+    );
   }
   if (entry === 'resources.arsc') {
     // ResTable: 02 00 0c 00
@@ -770,7 +747,9 @@ async function extractApkEntry(
 ): Promise<Buffer | null> {
   const base = serial ? ['-s', serial] : [];
   const cached = unzipUsage.get(file);
-  const variants = cached ? [cached, ...UNZIP_VARIANTS.filter((v) => v !== cached)] : UNZIP_VARIANTS;
+  const variants = cached
+    ? [cached, ...UNZIP_VARIANTS.filter((v) => v !== cached)]
+    : UNZIP_VARIANTS;
 
   for (const cmd of variants) {
     const res = await runAdbBuffer(
@@ -793,9 +772,19 @@ export async function readInstalledAppInfo(
   apkPath: string,
   options: { serial?: string } = {},
 ): Promise<ApkInfo | null> {
-  const manifest = await extractApkEntry(file, apkPath, 'AndroidManifest.xml', options.serial);
+  const manifest = await extractApkEntry(
+    file,
+    apkPath,
+    'AndroidManifest.xml',
+    options.serial,
+  );
   if (!manifest) return null;
-  const arsc = await extractApkEntry(file, apkPath, 'resources.arsc', options.serial);
+  const arsc = await extractApkEntry(
+    file,
+    apkPath,
+    'resources.arsc',
+    options.serial,
+  );
 
   const entries = [{ name: 'AndroidManifest.xml', data: manifest }];
   if (arsc) entries.push({ name: 'resources.arsc', data: arsc });
@@ -832,13 +821,15 @@ async function mapLimit<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
-  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    for (;;) {
-      const i = next++;
-      if (i >= items.length) return;
-      results[i] = await fn(items[i], i);
-    }
-  });
+  const workers = new Array(Math.min(limit, items.length))
+    .fill(0)
+    .map(async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= items.length) return;
+        results[i] = await fn(items[i], i);
+      }
+    });
   await Promise.all(workers);
   return results;
 }
@@ -853,7 +844,10 @@ export async function readInstalledAppLabels(
   file: string,
   aaptFile: string,
   items: InstalledAppItem[],
-  options: { serial?: string; onOne?: (pkg: string, label: string) => void } = {},
+  options: {
+    serial?: string;
+    onOne?: (pkg: string, label: string) => void;
+  } = {},
 ): Promise<{ packageName: string; label: string; versionName: string }[]> {
   return mapLimit(items, 4, async (item) => {
     const info = await readInstalledAppInfo(file, aaptFile, item.apkPath, {
@@ -934,7 +928,11 @@ export function findAapt(adbFile: string): string | null {
     versions.sort(cmpVersion).reverse();
     for (const v of versions) {
       for (const name of ['aapt', 'aapt2']) {
-        const file = path.join(dir, v, process.platform === 'win32' ? `${name}.exe` : name);
+        const file = path.join(
+          dir,
+          v,
+          process.platform === 'win32' ? `${name}.exe` : name,
+        );
         if (isExecutable(file)) return file;
       }
     }
@@ -988,11 +986,28 @@ export async function launchApp(
   options: { serial?: string; activity?: string } = {},
 ): Promise<{ ok: boolean; message: string; raw: string }> {
   const base = options.serial ? ['-s', options.serial] : [];
-  const useAmStart = !!options.activity && options.activity.startsWith(packageName);
+  const useAmStart =
+    !!options.activity && options.activity.startsWith(packageName);
 
   const args = useAmStart
-    ? [...base, 'shell', 'am', 'start', '-n', `${packageName}/${options.activity}`]
-    : [...base, 'shell', 'monkey', '-p', packageName, '-c', 'android.intent.category.LAUNCHER', '1'];
+    ? [
+        ...base,
+        'shell',
+        'am',
+        'start',
+        '-n',
+        `${packageName}/${options.activity}`,
+      ]
+    : [
+        ...base,
+        'shell',
+        'monkey',
+        '-p',
+        packageName,
+        '-c',
+        'android.intent.category.LAUNCHER',
+        '1',
+      ];
 
   const res = await runAdb(file, args, { timeout: 20000 });
   const raw = (res.stdout + res.stderr).trim();
@@ -1029,13 +1044,18 @@ export async function openInstalledApp(
   if (!aapt) {
     return {
       ok: false,
-      message: '没找到 aapt（在 Android SDK 的 build-tools 里），读不出包名，跳过自动打开',
+      message:
+        '没找到 aapt（在 Android SDK 的 build-tools 里），读不出包名，跳过自动打开',
       info: null,
     };
   }
   const info = readApkInfo(aapt, apkPath);
   if (!info) {
-    return { ok: false, message: '没读到安装包的包名，跳过自动打开', info: null };
+    return {
+      ok: false,
+      message: '没读到安装包的包名，跳过自动打开',
+      info: null,
+    };
   }
   const res = await launchApp(file, info.packageName, {
     serial,
@@ -1044,13 +1064,18 @@ export async function openInstalledApp(
   const name = info.label || info.packageName;
   return {
     ok: res.ok,
-    message: res.ok ? `已打开「${name}」` : `打开了「${name}」但失败了：${res.message}`,
+    message: res.ok
+      ? `已打开「${name}」`
+      : `打开了「${name}」但失败了：${res.message}`,
     info,
   };
 }
 
 /** 正在跑的安装任务，用来支持取消 */
-const runningInstalls = new Map<string, { child: ReturnType<typeof spawn>; canceled: boolean }>();
+const runningInstalls = new Map<
+  string,
+  { child: ReturnType<typeof spawn>; canceled: boolean }
+>();
 
 /** 取消一个正在跑的安装 */
 export function cancelInstall(taskId: string): boolean {
@@ -1132,7 +1157,9 @@ export async function installApk(
   };
 
   // 清掉可能残留的同名临时文件
-  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 15000 });
+  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], {
+    timeout: 15000,
+  });
 
   /* ---------- 第一步：push ---------- */
   report({
@@ -1143,90 +1170,125 @@ export async function installApk(
     text: `正在传输 ${apkName}（${(total / 1024 / 1024).toFixed(1)}MB）…`,
   });
 
-  const pushResult = await new Promise<{ ok: boolean; canceled: boolean; message: string }>(
-    (resolve) => {
-      const child = spawnAdb(file, [...base, 'push', apkPath, remote]);
-      const job = { child, canceled: false };
-      if (taskId) runningInstalls.set(taskId, job);
+  const pushResult = await new Promise<{
+    ok: boolean;
+    canceled: boolean;
+    message: string;
+  }>((resolve) => {
+    const child = spawnAdb(file, [...base, 'push', apkPath, remote]);
+    const job = { child, canceled: false };
+    if (taskId) runningInstalls.set(taskId, job);
 
-      let stderr = '';
-      let lastBytes = 0;
-      let lastChange = Date.now();
-      const started = Date.now();
-      let settled = false;
+    let stderr = '';
+    let lastBytes = 0;
+    let lastChange = Date.now();
+    const started = Date.now();
+    let settled = false;
 
-      child.stderr?.on('data', (d) => (stderr += d.toString()));
+    child.stderr?.on('data', (d) => (stderr += d.toString()));
 
-      // adb push 在管道里不输出进度，只能自己问手机现在收到多少了
-      const timer = setInterval(async () => {
-        if (settled) return;
-        if (Date.now() - lastChange > PUSH_STALL_MS || Date.now() - started > PUSH_MAX_MS) {
-          clearInterval(timer);
-          settled = true;
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            /* ignore */
-          }
-          resolve({
-            ok: false,
-            canceled: false,
-            message: '传输卡住了（2 分钟没有任何进度），已中止',
-          });
-          return;
+    // adb push 在管道里不输出进度，只能自己问手机现在收到多少了
+    const timer = setInterval(async () => {
+      if (settled) return;
+      if (
+        Date.now() - lastChange > PUSH_STALL_MS ||
+        Date.now() - started > PUSH_MAX_MS
+      ) {
+        clearInterval(timer);
+        settled = true;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* ignore */
         }
-        const res = await runAdb(
-          file,
-          [...base, 'shell', 'stat', '-c', '%s', remote],
-          { timeout: 8000 },
+        resolve({
+          ok: false,
+          canceled: false,
+          message: '传输卡住了（2 分钟没有任何进度），已中止',
+        });
+        return;
+      }
+      const res = await runAdb(
+        file,
+        [...base, 'shell', 'stat', '-c', '%s', remote],
+        { timeout: 8000 },
+      );
+      const size = parseInt((res.stdout || '').trim(), 10);
+      if (!Number.isNaN(size) && size !== lastBytes) {
+        lastBytes = size;
+        lastChange = Date.now();
+        const percent = total
+          ? Math.min(99, Math.round((size / total) * 100))
+          : 0;
+        report({
+          phase: 'push',
+          percent,
+          bytes: size,
+          total,
+          text: `正在传输 ${percent}%（${(size / 1024 / 1024).toFixed(1)}MB / ${(total / 1024 / 1024).toFixed(1)}MB）`,
+        });
+      }
+    }, 800);
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(timer);
+      resolve({
+        ok: false,
+        canceled: false,
+        message: err.message || String(err),
+      });
+    });
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(timer);
+      if (taskId) runningInstalls.delete(taskId);
+      if (job.canceled) {
+        resolve({ ok: false, canceled: true, message: '已取消安装' });
+        return;
+      }
+      const failedText =
+        /No space left|couldn't create file|device offline|device not found/i.test(
+          stderr,
         );
-        const size = parseInt((res.stdout || '').trim(), 10);
-        if (!Number.isNaN(size) && size !== lastBytes) {
-          lastBytes = size;
-          lastChange = Date.now();
-          const percent = total ? Math.min(99, Math.round((size / total) * 100)) : 0;
-          report({
-            phase: 'push',
-            percent,
-            bytes: size,
-            total,
-            text: `正在传输 ${percent}%（${(size / 1024 / 1024).toFixed(1)}MB / ${(total / 1024 / 1024).toFixed(1)}MB）`,
-          });
-        }
-      }, 800);
-
-      child.on('error', (err) => {
-        if (settled) return;
-        settled = true;
-        clearInterval(timer);
-        resolve({ ok: false, canceled: false, message: err.message || String(err) });
-      });
-      child.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        clearInterval(timer);
-        if (taskId) runningInstalls.delete(taskId);
-        if (job.canceled) {
-          resolve({ ok: false, canceled: true, message: '已取消安装' });
-          return;
-        }
-        const failedText = /No space left|couldn't create file|device offline|device not found/i.test(stderr);
-        if (code === 0) {
-          resolve({ ok: true, canceled: false, message: '传输完成' });
-        } else if (failedText) {
-          resolve({ ok: false, canceled: false, message: `传到手机失败：${stderr.trim().split('\n')[0]}` });
-        } else {
-          resolve({ ok: false, canceled: false, message: stderr.trim() || `传输失败（退出码 ${code}）` });
-        }
-      });
-    },
-  );
+      if (code === 0) {
+        resolve({ ok: true, canceled: false, message: '传输完成' });
+      } else if (failedText) {
+        resolve({
+          ok: false,
+          canceled: false,
+          message: `传到手机失败：${stderr.trim().split('\n')[0]}`,
+        });
+      } else {
+        resolve({
+          ok: false,
+          canceled: false,
+          message: stderr.trim() || `传输失败（退出码 ${code}）`,
+        });
+      }
+    });
+  });
 
   if (!pushResult.ok) {
-    await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 15000 });
-    report({ phase: 'done', percent: 0, bytes: 0, total, text: pushResult.message });
+    await runAdb(file, [...base, 'shell', 'rm', '-f', remote], {
+      timeout: 15000,
+    });
+    report({
+      phase: 'done',
+      percent: 0,
+      bytes: 0,
+      total,
+      text: pushResult.message,
+    });
     if (taskId) runningInstalls.delete(taskId);
-    return { ok: false, message: pushResult.message, raw: '', canceled: pushResult.canceled };
+    return {
+      ok: false,
+      message: pushResult.message,
+      raw: '',
+      canceled: pushResult.canceled,
+    };
   }
 
   report({
@@ -1238,71 +1300,100 @@ export async function installApk(
   });
 
   /* ---------- 第二步：pm install ---------- */
-  const installRes = await new Promise<{ code: number | null; output: string }>((resolve) => {
-    const child = spawnAdb(file, [
-      ...base,
-      'shell',
-      'pm',
-      'install',
-      '-r',
-      '-d',
-      '-g',
-      remote,
-    ]);
-    const job = { child, canceled: false };
-    if (taskId) runningInstalls.set(taskId, job);
+  const installRes = await new Promise<{ code: number | null; output: string }>(
+    (resolve) => {
+      const child = spawnAdb(file, [
+        ...base,
+        'shell',
+        'pm',
+        'install',
+        '-r',
+        '-d',
+        '-g',
+        remote,
+      ]);
+      const job = { child, canceled: false };
+      if (taskId) runningInstalls.set(taskId, job);
 
-    let output = '';
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        /* ignore */
-      }
-      resolve({ code: null, output: output + '\n安装超时' });
-    }, PM_INSTALL_MAX_MS);
+      let output = '';
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* ignore */
+        }
+        resolve({ code: null, output: output + '\n安装超时' });
+      }, PM_INSTALL_MAX_MS);
 
-    child.stdout?.on('data', (d) => {
-      output += d.toString();
-      // pm install 一般只在最后输出 Success/Failure，中途有输出就即时透传
-      const text = d.toString().trim();
-      if (text && !/^\s*$/.test(text)) onOutput?.(text + '\n');
-    });
-    child.stderr?.on('data', (d) => (output += d.toString()));
-    child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ code: 1, output: output + (err.message || '') });
-    });
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ code, output, canceled: job.canceled } as any);
-    });
-  });
+      child.stdout?.on('data', (d) => {
+        output += d.toString();
+        // pm install 一般只在最后输出 Success/Failure，中途有输出就即时透传
+        const text = d.toString().trim();
+        if (text && !/^\s*$/.test(text)) onOutput?.(text + '\n');
+      });
+      child.stderr?.on('data', (d) => (output += d.toString()));
+      child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code: 1, output: output + (err.message || '') });
+      });
+      child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve({ code, output, canceled: job.canceled } as any);
+      });
+    },
+  );
 
   if ((installRes as any).canceled) {
-    await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 15000 });
+    await runAdb(file, [...base, 'shell', 'rm', '-f', remote], {
+      timeout: 15000,
+    });
     if (taskId) runningInstalls.delete(taskId);
-    report({ phase: 'done', percent: 0, bytes: total, total, text: '已取消安装' });
-    return { ok: false, message: '已取消安装', raw: installRes.output, canceled: true };
+    report({
+      phase: 'done',
+      percent: 0,
+      bytes: total,
+      total,
+      text: '已取消安装',
+    });
+    return {
+      ok: false,
+      message: '已取消安装',
+      raw: installRes.output,
+      canceled: true,
+    };
   }
 
   /* ---------- 第三步：清理 ---------- */
-  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], { timeout: 15000 });
+  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], {
+    timeout: 15000,
+  });
   if (taskId) runningInstalls.delete(taskId);
 
   const judged = judgeInstall(installRes.output);
   if (!judged.ok) {
-    report({ phase: 'done', percent: 0, bytes: total, total, text: judged.message });
+    report({
+      phase: 'done',
+      percent: 0,
+      bytes: total,
+      total,
+      text: judged.message,
+    });
     return { ok: false, message: judged.message, raw: installRes.output };
   }
-  report({ phase: 'done', percent: 100, bytes: total, total, text: judged.message });
+  report({
+    phase: 'done',
+    percent: 100,
+    bytes: total,
+    total,
+    text: judged.message,
+  });
 
   if (!options.autoOpen) return { ...judged, raw: installRes.output };
 
@@ -1324,13 +1415,25 @@ export function judgeInstall(raw: string): { ok: boolean; message: string } {
   if (/\bSuccess\b/i.test(text)) return { ok: true, message: '安装成功' };
 
   const known: [RegExp, string][] = [
-    [/INSTALL_FAILED_UPDATE_INCOMPATIBLE/, '签名不一致，手机上已装的版本签名不同，需要先卸载'],
-    [/INSTALL_FAILED_VERSION_DOWNGRADE/, '手机上已装的版本更高，已加 -d 仍失败'],
-    [/INSTALL_FAILED_OLDER_SDK/, '安装包的 minSdkVersion 比手机系统还高，装不上'],
+    [
+      /INSTALL_FAILED_UPDATE_INCOMPATIBLE/,
+      '签名不一致，手机上已装的版本签名不同，需要先卸载',
+    ],
+    [
+      /INSTALL_FAILED_VERSION_DOWNGRADE/,
+      '手机上已装的版本更高，已加 -d 仍失败',
+    ],
+    [
+      /INSTALL_FAILED_OLDER_SDK/,
+      '安装包的 minSdkVersion 比手机系统还高，装不上',
+    ],
     [/INSTALL_FAILED_INSUFFICIENT_STORAGE/, '手机存储空间不足'],
     [/INSTALL_FAILED_INVALID_APK/, '安装包损坏或不是合法的 APK'],
     [/INSTALL_PARSE_FAILED/, '解析安装包失败，文件可能不完整'],
-    [/INSTALL_FAILED_USER_RESTRICTED/, '手机系统限制了安装（小米/华为需要在开发者选项里关掉「USB 安装限制」）'],
+    [
+      /INSTALL_FAILED_USER_RESTRICTED/,
+      '手机系统限制了安装（小米/华为需要在开发者选项里关掉「USB 安装限制」）',
+    ],
     [/INSTALL_FAILED_TEST_ONLY/, '这是 test-only 的包'],
     [/no devices|device .* not found/, '设备断开了，重新插一下线'],
     [/failed to stat/i, '读取安装包失败，检查文件路径'],
@@ -1393,7 +1496,10 @@ export async function wakeUp(
   if (serial) args.unshift('-s', serial);
   const res = await runAdb(file, args, { timeout: 15000 });
   const ok = res.code === 0;
-  return { ok, message: ok ? '已发送唤醒指令' : (res.stderr || '唤醒失败').trim() };
+  return {
+    ok,
+    message: ok ? '已发送唤醒指令' : (res.stderr || '唤醒失败').trim(),
+  };
 }
 
 /* 屏幕常亮（stay_on_while_plugged_in）是个位掩码 */
@@ -1413,7 +1519,10 @@ export interface StayAwakeState {
 }
 
 /** 把位掩码翻译成人话 */
-export function parseStayOnValue(value: number): { on: boolean; modes: string[] } {
+export function parseStayOnValue(value: number): {
+  on: boolean;
+  modes: string[];
+} {
   const on = value > 0;
   const modes: string[] = [];
   if (value & STAY_ON_BITS.ac) modes.push('充电器');
@@ -1429,7 +1538,18 @@ export async function getStayAwake(
 ): Promise<StayAwakeState> {
   const base = serial ? ['-s', serial] : [];
   const [setting, power] = await Promise.all([
-    runAdb(file, [...base, 'shell', 'settings', 'get', 'global', 'stay_on_while_plugged_in'], { timeout: 15000 }),
+    runAdb(
+      file,
+      [
+        ...base,
+        'shell',
+        'settings',
+        'get',
+        'global',
+        'stay_on_while_plugged_in',
+      ],
+      { timeout: 15000 },
+    ),
     runAdb(file, [...base, 'shell', 'dumpsys', 'power'], { timeout: 15000 }),
   ]);
 
@@ -1459,7 +1579,12 @@ export async function setStayAwake(
   file: string,
   on: boolean,
   serial?: string,
-): Promise<{ ok: boolean; message: string; raw: string; state: StayAwakeState }> {
+): Promise<{
+  ok: boolean;
+  message: string;
+  raw: string;
+  state: StayAwakeState;
+}> {
   const base = serial ? ['-s', serial] : [];
   const res = await runAdb(
     file,
@@ -1469,9 +1594,13 @@ export async function setStayAwake(
   const raw = (res.stdout + res.stderr).trim();
   if (on) {
     // 顺便点亮屏幕
-    await runAdb(file, [...base, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'], {
-      timeout: 15000,
-    });
+    await runAdb(
+      file,
+      [...base, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'],
+      {
+        timeout: 15000,
+      },
+    );
   }
   const state = await getStayAwake(file, serial);
   const ok = on ? state.on : !state.on;
@@ -1497,8 +1626,13 @@ export async function enableTcpip(
   if (serial) args.unshift('-s', serial);
   const res = await runAdb(file, args, { timeout: 20000 });
   const raw = (res.stdout + res.stderr).trim();
-  const ok = res.code === 0 && /restarting in TCP mode|already in TCP mode/i.test(raw);
-  return { ok, message: ok ? `已开启无线调试（端口 ${port}）` : raw || '开启失败', raw };
+  const ok =
+    res.code === 0 && /restarting in TCP mode|already in TCP mode/i.test(raw);
+  return {
+    ok,
+    message: ok ? `已开启无线调试（端口 ${port}）` : raw || '开启失败',
+    raw,
+  };
 }
 
 /** 连接无线设备 */
