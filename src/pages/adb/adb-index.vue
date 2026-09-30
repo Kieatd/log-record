@@ -153,6 +153,8 @@ interface InstallProgressState {
 const installState = ref<InstallProgressState | null>(null);
 const installElapsed = ref(0);
 let installTimer: ReturnType<typeof setInterval> | null = null;
+/** 定期刷设备列表：拔线/插线、以及 tcpip 重启 adbd 导致 USB 记录短暂消失，都要能自己长回来 */
+let devTimer: ReturnType<typeof setInterval> | null = null;
 
 /** 包名 → 安装时间（毫秒）。ADB 不直接给，要解析 dumpsys package */
 const installTimes = ref<Record<string, number>>({});
@@ -279,13 +281,32 @@ async function switchTransport(
   g: { usb?: AdbDevice; wifi?: AdbDevice },
   t: 'usb' | 'wifi',
 ) {
+  const wasRunning = mirrorRunning.value;
   if (t === 'usb') {
-    if (!g.usb) {
-      message.warning(i18n.t('没插数据线，切不回 USB'));
+    let usb = g.usb;
+    if (!usb) {
+      // 刚跑过 tcpip（adbd 重启）的那两三秒里，USB 记录会从 adb 列表里短暂消失。
+      // 所以这里不直接拒绝：先强制刷一次列表再判定。
+      await loadDevices();
+      const again = deviceGroups.value.find(
+        (x) => x.wifi?.serial === g.wifi?.serial,
+      );
+      usb = again?.usb;
+    }
+    if (!usb) {
+      message.warning(i18n.t('没找到 USB 设备：数据线插好了吗'));
       return;
     }
     if (currentSerial.value !== g.usb.serial) await selectDevice(g.usb.serial);
     return;
+
+    // 换通道后，投屏要用新通道的参数重开（USB 1024/30fps/4Mbps，无线 720p/20fps/2Mbps）。
+    // 等一拍再开：selectDevice 只改了 currentSerial，props 要下一个 tick 才更新。
+    if (wasRunning && !mirrorRunning.value) {
+      await new Promise((r) => setTimeout(r, 500));
+      mirrorRef.value?.start();
+      pushLog('投屏已按新通道的参数重开', 'info');
+    }
   }
   if (g.wifi) {
     if (currentSerial.value !== g.wifi.serial)
@@ -1726,12 +1747,7 @@ function deviceSubtitle(d: AdbDevice) {
               @click.stop
               @change="(e: any) => switchTransport(g, e.target.value)"
             >
-              <a-radio-button
-                value="usb"
-                :disabled="!g.usb"
-              >
-                USB
-              </a-radio-button>
+              <a-radio-button value="usb">USB</a-radio-button>
               <a-radio-button value="wifi">WiFi</a-radio-button>
             </a-radio-group>
           </div>
