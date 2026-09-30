@@ -907,7 +907,6 @@ const createWindow = () => {
   });
 
   Menu.setApplicationMenu(null);
-
   if (maximized) {
     mainWindow.maximize();
   }
