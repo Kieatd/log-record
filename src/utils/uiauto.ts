@@ -6,6 +6,7 @@
  *
  * 刻意不 import electron，方便脱离 Electron 直接用 node 测。
  */
+import fs from 'fs';
 import { launchApp, runAdb } from './adb';
 
 export interface UiNode {
@@ -70,28 +71,26 @@ export async function dumpUi(
 ): Promise<{ ok: boolean; nodes: UiNode[]; message?: string }> {
   const base = serial ? ['-s', serial] : [];
   const remote = '/data/local/tmp/lr-ui.xml';
-  const dump = await runAdb(
+  // dump + cat + rm 合成一次 adb shell：
+  // 有些手机（比如这台 HONOR）每次 adb shell 要 2~4 秒，拆成三条命令等于白白多花两倍时间。
+  // 顺便用 --compressed：只留有意义的节点，老机器上快很多。
+  const r = await runAdb(
     file,
-    [...base, 'shell', 'uiautomator', 'dump', remote],
-    { timeout: 30000 },
+    [
+      ...base,
+      'shell',
+      `uiautomator dump --compressed ${remote} >/dev/null 2>&1; cat ${remote}; rm -f ${remote}`,
+    ],
+    { timeout: 40000 },
   );
-  if (!/dumped to/i.test(dump.stdout + dump.stderr)) {
+  if (!r.stdout.includes('<hierarchy')) {
     return {
       ok: false,
       nodes: [],
-      message: (dump.stdout + dump.stderr).trim() || '导出界面结构失败',
+      message: (r.stdout + r.stderr).trim() || '导出界面结构失败',
     };
   }
-  const cat = await runAdb(file, [...base, 'exec-out', 'cat', remote], {
-    timeout: 20000,
-  });
-  await runAdb(file, [...base, 'shell', 'rm', '-f', remote], {
-    timeout: 10000,
-  });
-  if (!cat.stdout.includes('<hierarchy')) {
-    return { ok: false, nodes: [], message: '读出来的界面结构不对' };
-  }
-  return { ok: true, nodes: parseUiDump(cat.stdout) };
+  return { ok: true, nodes: parseUiDump(r.stdout) };
 }
 
 /** 找文字（text 或 content-desc），取面积最小的那个（最具体） */
@@ -737,7 +736,7 @@ async function tapByName(
         const [x, y] = centerOf(node);
         await tapAt(file, base, x, y);
         steps.push(`点「${name}」（${x},${y}）`);
-        await new Promise((r) => setTimeout(r, 1600));
+        await new Promise((r) => setTimeout(r, 1100));
         return true;
       }
     }
@@ -747,10 +746,13 @@ async function tapByName(
       [...base, 'shell', 'input', 'swipe', '540', '1500', '540', '800', '300'],
       { timeout: 15000 },
     );
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, 700));
   }
   return false;
 }
+
+/** 是否有华为文件管理（只查一次） */
+let huaweiFileManager: boolean | null = null;
 
 /** 各家文件管理器里「内部存储」的叫法 */
 const STORAGE_ROOT_NAMES = [
@@ -774,12 +776,15 @@ async function navigateToFolder(
 ): Promise<{ ok: boolean; message: string; steps: string[] }> {
   const steps: string[] = [];
   // 华为文件管理（EMUI）优先；没有就用系统 DocumentsUI
-  const listed = await runAdb(
-    file,
-    [...base, 'shell', 'pm', 'list', 'packages', 'com.huawei.hidisk'],
-    { timeout: 15000 },
-  );
-  const huawei = listed.stdout.includes('com.huawei.hidisk');
+  if (huaweiFileManager === null) {
+    const listed = await runAdb(
+      file,
+      [...base, 'shell', 'pm', 'list', 'packages', 'com.huawei.hidisk'],
+      { timeout: 15000 },
+    );
+    huaweiFileManager = listed.stdout.includes('com.huawei.hidisk');
+  }
+  const huawei = huaweiFileManager;
 
   await runAdb(
     file,
@@ -793,9 +798,14 @@ async function navigateToFolder(
     : ['am', 'start', '-a', 'android.intent.action.VIEW_DOWNLOADS'];
   await runAdb(file, [...base, 'shell', ...start], { timeout: 20000 });
   steps.push(huawei ? '打开华为文件管理' : '打开系统文件管理');
-  await new Promise((r) => setTimeout(r, 2500));
+  await new Promise((r) => setTimeout(r, 1600));
 
-  // 逐级进入：内部存储 → Download → 子目录…
+  const segs = dir
+    .replace(/^\/(?:sdcard|storage\/emulated\/0)\//, '')
+    .split('/')
+    .filter(Boolean);
+
+  // 逐级 dump 找节点再点（这台手机没有"直接打开目录"的 API，只能点进去）
   if (!(await tapByName(file, base, STORAGE_ROOT_NAMES, serial, steps))) {
     return {
       ok: false,
@@ -803,10 +813,6 @@ async function navigateToFolder(
       steps,
     };
   }
-  const segs = dir
-    .replace(/^\/(?:sdcard|storage\/emulated\/0)\//, '')
-    .split('/')
-    .filter(Boolean);
   for (const seg of segs) {
     if (!(await tapByName(file, base, [seg], serial, steps))) {
       return { ok: false, message: `没找到子目录「${seg}」`, steps };
@@ -823,7 +829,9 @@ export async function openFolderOnPhone(
   file: string,
   folder: string,
   serial?: string,
+  cacheFile?: string,
 ): Promise<{ ok: boolean; message: string; steps?: string[] }> {
+  if (cacheFile && cacheFile !== tapCacheFile) loadTapCache(cacheFile);
   const base = serial ? ['-s', serial] : [];
   const dir = folder.endsWith('/') ? folder : `${folder}/`;
 
