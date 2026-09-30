@@ -1372,84 +1372,6 @@ function shotSize(bytes: number) {
 
 /* ---------------- 无线连接 ---------------- */
 
-async function enableWifi() {
-  if (!currentSerial.value) {
-    message.warning(i18n.t('先插上线，选中一台设备'));
-    return;
-  }
-  busyWifi.value = true;
-  try {
-    /**
-     * 先取手机 IP，再执行 `adb tcpip`。
-     *
-     * 顺序很关键：`adb tcpip 5555` 会重启手机上的 adbd —— USB 连接会瞬间断开再回来，
-     * 紧接着发 adb 命令会拿到 `adb: device 'xxx' not found`。
-     * 之前就是先 tcpip 再取 IP，于是取 IP 永远失败（而且失败是静默的），
-     * 「连接」按钮就一直是灰的 / ⚙ 里永远是空的。
-     */
-    let phoneIp = '';
-    try {
-      const ipRes = await api.adbShell(
-        'ip -f inet addr show wlan0',
-        currentSerial.value,
-      );
-      const ipText = String(ipRes.message || '');
-      // 别取第一个 IP：`ip route` 那种输出第一个是网段地址，所以要认 src / inet 后面那个
-      const m =
-        ipText.match(/src\s+(\d+\.\d+\.\d+\.\d+)/) ||
-        ipText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
-      if (m) phoneIp = m[1];
-    } catch {
-      /* 取不到就等用户手动填 */
-    }
-
-    const res = await api.adbTcpip(currentSerial.value, 5555);
-    pushLog(
-      res.raw ? `$ adb tcpip 5555\n${res.raw}` : res.message,
-      res.ok ? 'ok' : 'err',
-    );
-    if (res.ok) {
-      if (phoneIp) {
-        if (!wifiIp.value) wifiIp.value = phoneIp;
-        // 顺手存下来：这个 IP 是"手机自己的属性"，不是用户输入，
-        // 不存的话重启应用又得重新点一次「开启」才拿得到。
-        localStorage.setItem(WIFI_IP_KEY, phoneIp);
-      }
-      message.success(res.message + (phoneIp ? `  ${phoneIp}` : ''));
-    } else {
-      message.error(res.message);
-    }
-  } finally {
-    busyWifi.value = false;
-  }
-}
-
-async function connectWifi() {
-  if (!wifiIp.value.trim()) {
-    // 别把按钮置灰了不说原因：直接告诉用户 IP 从哪来
-    message.warning(
-      `${i18n.t('填一下手机的 IP')}：${i18n.t('插线时点一次「开启」，之后拔线也能用')}；${i18n.t('设置 IP')} ⚙`,
-    );
-    return;
-  }
-  busyWifi.value = true;
-  try {
-    const res = await api.adbConnect(wifiIp.value.trim(), 5555);
-    pushLog(
-      `$ adb connect ${wifiIp.value.trim()}:5555\n${res.raw || res.message}`,
-      res.ok ? 'ok' : 'err',
-    );
-    if (res.ok) {
-      message.success(res.message);
-      await loadDevices();
-    } else {
-      message.error(res.message);
-    }
-  } finally {
-    busyWifi.value = false;
-  }
-}
-
 /** 断开无线连接；如果当前用的就是它，切回 USB 设备（否则界面会停在已不存在的设备上） */
 async function disconnectWifi() {
   const target = wirelessDevice.value;
@@ -1773,7 +1695,8 @@ function deviceSubtitle(d: AdbDevice) {
             <div
               v-if="deviceIp(g)"
               class="device-net"
-              :title="deviceIp(g)"
+              :title="$t('点一下可以手动改 IP')"
+              @click.stop="wifiIpOpen = true"
             >
               <LinkOutlined class="device-net-icon" />
               <span>{{ deviceIp(g) }}</span>
@@ -1781,8 +1704,17 @@ function deviceSubtitle(d: AdbDevice) {
             <div
               v-else
               class="device-net device-net-off"
+              @click.stop="wifiIpOpen = true"
             >
               {{ $t('无线未开启') }}
+            </div>
+            <div
+              v-if="g.wifi"
+              class="device-net device-net-action"
+              @click.stop="disconnectWifi()"
+            >
+              <DisconnectOutlined class="device-net-icon" />
+              <span>{{ $t('断开') }}</span>
             </div>
             <div
               class="device-state"
@@ -2045,68 +1977,6 @@ function deviceSubtitle(d: AdbDevice) {
               >
                 {{ $t('连接后自动开启') }}
               </a-checkbox>
-            </span>
-          </div>
-        </div>
-
-        <!-- 无线连接 -->
-        <div
-          class="tile"
-          :class="{ 'tile-disabled': !ready }"
-        >
-          <div class="tile-main tile-main-flat">
-            <div class="tile-icon"><WifiOutlined /></div>
-            <a-tooltip :title="$t('插线时点一次「开启」，之后拔线也能用')">
-              <div class="tile-title">{{ $t('无线调试') }}</div>
-            </a-tooltip>
-            <div class="tile-desc">{{ $t('插线开启一次，之后可拔线') }}</div>
-            <div class="tile-row">
-              <a-button
-                size="small"
-                :disabled="!ready"
-                :loading="busyWifi"
-                @click.stop="enableWifi"
-              >
-                <UsbOutlined />
-                {{ $t('开启') }}
-              </a-button>
-              <a-button
-                size="small"
-                type="primary"
-                :loading="busyWifi"
-                @click.stop="connectWifi"
-              >
-                <LinkOutlined />
-                {{ $t('连接') }}
-              </a-button>
-            </div>
-          </div>
-          <div class="tile-side">
-            <a-tooltip :title="$t('要连的手机 IP，例如 192.168.1.5')">
-              <div
-                class="tile-side-entry"
-                @click="wifiIpOpen = true"
-              >
-                <SettingOutlined class="tile-side-entry-icon" />
-                <div class="tile-side-entry-label">
-                  {{ wifiIp ? $t('已设 IP') : $t('设置 IP') }}
-                </div>
-              </div>
-            </a-tooltip>
-            <span
-              v-if="wirelessDevice"
-              class="tile-guard"
-              @click.stop
-              @mousedown.stop
-            >
-              <div
-                class="tile-side-entry"
-                :class="{ 'tile-side-entry-off': busyWifi }"
-                @click="disconnectWifi"
-              >
-                <DisconnectOutlined class="tile-side-entry-icon" />
-                <div class="tile-side-entry-label">{{ $t('断开') }}</div>
-              </div>
             </span>
           </div>
         </div>
@@ -2972,6 +2842,7 @@ function deviceSubtitle(d: AdbDevice) {
 
 /* 右上角那个 IP：有 IP 就代表无线调试已经开着、而且 App 已连上 */
 .device-net {
+  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2979,7 +2850,16 @@ function deviceSubtitle(d: AdbDevice) {
   color: #336666;
 }
 
-.device-net-off {
+.device-net-action {
+  color: #999;
+  cursor: pointer;
+}
+
+.device-net-action:hover {
+  color: #c0392b;
+}
+
+.device-net {
   color: #bbb;
 }
 
