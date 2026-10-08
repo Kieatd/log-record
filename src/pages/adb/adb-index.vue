@@ -552,7 +552,16 @@ async function refreshUsbHint() {
   }
   try {
     const res = await api.usbScanPhones();
-    usbPhones.value = res?.supported ? res.phones || [] : [];
+    const phones = res?.supported ? res.phones || [] : [];
+    // 刚插上线那几秒 adbd 在重启，ADB 接口会短暂消失（实测有 10 秒左右），
+    // 直接报「没开 USB 调试」会误报 —— 隔几秒再确认一次，两次都这样才提示
+    if (phones.some((x) => !x.hasAdb)) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const again = await api.usbScanPhones();
+      usbPhones.value = again?.supported ? again.phones || [] : [];
+      return;
+    }
+    usbPhones.value = phones;
   } catch {
     usbPhones.value = [];
   }
@@ -608,7 +617,10 @@ async function handoffToWifi(prevSerial: string) {
     message.info(i18n.t('数据线断了，正在切到无线…'));
     const ready = await ensureDeviceReady(now);
     if (!ready.ok) {
-      pushLog(`无线没接上：${ready.why}`, 'err');
+      pushLog(
+        `无线没接上：${ready.why}（这台手机一拔线就把无线调试关掉，插回线才能重开）`,
+        'err',
+      );
       message.error(
         i18n.t(
           '无线没接上：{why}。有些手机（比如这台）拔线后会把无线调试关掉 —— 插回数据线，点「开启」再点「连接」',
