@@ -40,6 +40,8 @@ import {
   FolderFilled,
   FileOutlined,
   DownloadOutlined,
+  HomeOutlined,
+  ArrowUpOutlined,
 } from '@ant-design/icons-vue';
 import ScrcpyView from './scrcpy-view.vue';
 
@@ -780,6 +782,37 @@ async function loadPhoneFiles() {
   }
 }
 
+/** 进文件夹 */
+function enterDir(item: { name: string; isDir: boolean; path: string }) {
+  if (!item.isDir) return;
+  fileDir.value = `${item.path}/`;
+  void loadPhoneFiles();
+}
+
+/** 返回上级（不允许跑到起始目录上面去） */
+function goUp() {
+  const cur = fileDir.value.replace(/\/+$/, '');
+  const home = homeDir.value.replace(/\/+$/, '');
+  if (cur === home || !cur.startsWith(home)) {
+    fileDir.value = homeDir.value;
+  } else {
+    const parent = cur.slice(0, cur.lastIndexOf('/'));
+    fileDir.value = `${parent.length < home.length ? home : parent}/`;
+  }
+  void loadPhoneFiles();
+}
+
+/** 回到起始目录 */
+function goHome() {
+  fileDir.value = homeDir.value;
+  void loadPhoneFiles();
+}
+
+/** 当前目录是不是已经到顶了（到顶就不显示「..」） */
+const atHome = computed(
+  () => fileDir.value.replace(/\/+$/, '') === homeDir.value.replace(/\/+$/, ''),
+);
+
 function openFiles() {
   filesOpen.value = true;
   void loadPhoneFiles();
@@ -1316,9 +1349,12 @@ const fileList = ref<
 const fileRenameOpen = ref(false);
 const fileRenameValue = ref('');
 const fileRenameFrom = ref<{ name: string; path: string } | null>(null);
-const fileDir = computed(() =>
+/** 起始目录（就是磁贴映射的那个目录，不让改） */
+const homeDir = computed(() =>
   pushDest.value.endsWith('/') ? pushDest.value : `${pushDest.value}/`,
 );
+/** 当前正在看的目录：点文件夹可以进去，可以返回上级 */
+const fileDir = ref(homeDir.value);
 let fileTimer: ReturnType<typeof setInterval> | null = null;
 // 无线调试：IP 设置的弹层
 const WIFI_IP_KEY = 'Log Record$$wifiIp';
@@ -1346,7 +1382,7 @@ const pushMb = computed(() => {
   return `${(st.bytes / 1024 / 1024).toFixed(1)} / ${(st.total / 1024 / 1024).toFixed(1)} MB`;
 });
 
-async function doPush(paths: string[]) {
+async function doPush(paths: string[], dest?: string) {
   if (!ready.value) {
     message.warning(i18n.t('先插上线，选中一台设备'));
     return;
@@ -1359,13 +1395,13 @@ async function doPush(paths: string[]) {
   if (pushTimer) clearInterval(pushTimer);
   pushTimer = setInterval(() => (pushElapsed.value += 1), 1000);
   pushLog(
-    `${i18n.t('正在传到')} ${pushDest.value}（${paths.length} 项）…`,
+    `${i18n.t('正在传到')} ${dest || pushDest.value}（${paths.length} 项）…`,
     'info',
   );
   try {
     const res = await api.pushFiles(
       paths,
-      pushDest.value,
+      dest || pushDest.value,
       currentSerial.value,
       pushTaskId.value,
     );
@@ -1382,9 +1418,9 @@ async function doPush(paths: string[]) {
   }
 }
 
-async function pickAndPush() {
+async function pickAndPush(dir?: string) {
   const res = await api.pushPick();
-  if (!res.canceled) await doPush(res.paths);
+  if (!res.canceled) await doPush(res.paths, dir);
 }
 
 async function cancelPush() {
@@ -2584,7 +2620,30 @@ function deviceSubtitle(d: AdbDevice) {
         @cancel="closeFiles"
       >
         <div class="file-bar">
-          <div class="file-path">{{ fileDir }}</div>
+          <div
+            class="file-path"
+            :title="fileDir"
+          >
+            {{ fileDir }}
+          </div>
+          <a-tooltip :title="$t('返回上一级')">
+            <a-button
+              size="small"
+              :disabled="atHome"
+              @click="goUp"
+            >
+              <ArrowUpOutlined />
+            </a-button>
+          </a-tooltip>
+          <a-tooltip :title="$t('回到起始目录')">
+            <a-button
+              size="small"
+              :disabled="atHome"
+              @click="goHome"
+            >
+              <HomeOutlined />
+            </a-button>
+          </a-tooltip>
           <a-tooltip :title="$t('重新读一次')">
             <a-button
               size="small"
@@ -2598,7 +2657,7 @@ function deviceSubtitle(d: AdbDevice) {
             size="small"
             type="primary"
             :disabled="!ready"
-            @click="pickAndPush"
+            @click="pickAndPush(fileDir)"
           >
             <UploadOutlined />
             {{ $t('上传') }}
@@ -2619,10 +2678,12 @@ function deviceSubtitle(d: AdbDevice) {
             v-for="f in fileList"
             :key="f.path"
             class="un-item"
+            :class="{ 'file-row-dir': f.isDir }"
+            @click="f.isDir && enterDir(f)"
           >
             <FolderFilled
               v-if="f.isDir"
-              class="file-icon"
+              class="file-icon file-icon-dir"
             />
             <FileOutlined
               v-else
@@ -2644,7 +2705,7 @@ function deviceSubtitle(d: AdbDevice) {
                 size="small"
                 type="link"
                 :loading="fileBusy === f.path"
-                @click="downloadPhoneFile(f)"
+                @click.stop="downloadPhoneFile(f)"
               >
                 <DownloadOutlined />
               </a-button>
@@ -2653,7 +2714,7 @@ function deviceSubtitle(d: AdbDevice) {
               <a-button
                 size="small"
                 type="link"
-                @click="startRename(f)"
+                @click.stop="startRename(f)"
               >
                 <EditOutlined />
               </a-button>
@@ -2663,7 +2724,7 @@ function deviceSubtitle(d: AdbDevice) {
                 size="small"
                 type="link"
                 danger
-                @click="confirmDeleteFile(f)"
+                @click.stop="confirmDeleteFile(f)"
               >
                 <DeleteOutlined />
               </a-button>
@@ -3603,6 +3664,19 @@ function deviceSubtitle(d: AdbDevice) {
 
 .file-list {
   max-height: 420px;
+}
+
+/* 文件夹行：能点进去 */
+.file-row-dir {
+  cursor: pointer;
+}
+
+.file-row-dir:hover {
+  background: #f2f6f6;
+}
+
+.file-icon-dir {
+  color: #e8b339;
 }
 
 .file-icon {
