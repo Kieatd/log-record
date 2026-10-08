@@ -244,10 +244,17 @@ export default {
 
   '投屏没在跑（可能被重启过），请点「开始投屏」重新连': 'Mirroring is not running (the app may have restarted). Click "Start mirroring" again',
   '投屏会在手机上启动一个服务，需要时再开': 'Mirroring starts a service on the phone — start it only when needed',
-  '设备还没就绪，投屏没自动重开；过会儿点投屏面板上的「重试」':
-    'The device is not ready yet — mirroring was not restarted; try “Retry” in the mirror panel',
-  '无线设备还没就绪，投屏没自动重开；过会儿点投屏面板上的「重试」':
-    'The wireless device is not ready yet — mirroring was not restarted; try “Retry” in the mirror panel',
+  '数据线断了，正在切到无线…': 'Cable unplugged — switching to Wi-Fi…',
+  '无线没接上：{why}。插回数据线点一次「开启」，再点「连接」':
+    'Wi-Fi did not connect: {why}. Plug the cable back in, tap “Enable”, then “Connect”',
+  '设备没就绪：{why}；点投屏面板上的「重试」再试':
+    'Device not ready: {why} — try “Retry” in the mirror panel',
+  '设备没就绪：{why}': 'Device not ready: {why}',
+  'USB 设备没出现在 adb 列表里': 'The USB device is not in the adb list',
+  '连上了，但设备一直是 offline': 'Connected, but the device stays offline',
+  '没有可用的设备：先插线，或点「连接」连上无线':
+    'No usable device — plug in the cable, or connect over Wi-Fi first',
+  投屏已接上: 'Mirroring connected',
   '投屏没接上，点投屏面板上的「重试」试试':
     'Mirroring did not connect — try “Retry” in the mirror panel',
   '重试': 'Retry',

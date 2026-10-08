@@ -298,22 +298,72 @@ function groupSubtitle(g: {
  * 先等设备真的变成 device 再开：刚 connect / 刚拔线那一会儿，adb 里的状态可能是 offline，
  * 这时开 scrcpy 会直接报「没有可用的设备（状态必须是 device）」。
  */
-async function reopenMirror(wasRunning: boolean, timeoutMs = 5000) {
+async function reopenMirror(wasRunning: boolean) {
   if (!wasRunning || mirrorRunning.value) return;
   // selectDevice 只改了 currentSerial，props 要下一个 tick 才更新，先等一拍
   await new Promise((r) => setTimeout(r, 300));
   const serial = currentSerial.value;
-  if (!(await waitForDeviceReady(serial, timeoutMs))) {
-    pushLog(
-      `设备还没就绪（${serial}），投屏先不自动重开（点投屏面板的「重试」）`,
-      'err',
-    );
+  if (!serial) return;
+  const ready = await ensureDeviceReady(serial);
+  if (!ready.ok) {
+    pushLog(`设备没就绪（${serial}）：${ready.why}`, 'err');
     message.warning(
-      i18n.t('设备还没就绪，投屏没自动重开；过会儿点投屏面板上的「重试」'),
+      i18n.t('设备没就绪：{why}；点投屏面板上的「重试」再试', {
+        why: ready.why,
+      }),
     );
     return;
   }
   await restartMirror('投屏已按新通道的参数重开');
+}
+
+/**
+ * 让某台设备真的可用（device 状态）。
+ *
+ * 为什么需要它：adbd 断过的条目会在 adb 里残留成 offline，而这种条目单靠
+ * `adb connect` 不会重置（adb 只会回一句 already connected），必须先 disconnect。
+ * 还是连不上就把 adb 的原话（例如 Connection refused）带出去，让用户知道真实原因。
+ */
+async function ensureDeviceReady(
+  serial: string,
+): Promise<{ ok: boolean; why: string }> {
+  if (await waitForDeviceReady(serial, 2000)) return { ok: true, why: '' };
+  if (!/:\d+$/.test(serial)) {
+    return { ok: false, why: i18n.t('USB 设备没出现在 adb 列表里') };
+  }
+  const ip = serial.replace(/:\d+$/, '');
+  const port = Number(serial.split(':')[1]) || 5555;
+  await api.adbDisconnect(serial);
+  pushLog(`重新连一次无线 ${ip}:${port}`, 'info');
+  const conn = await api.adbConnect(ip, port);
+  pushLog(
+    `$ adb connect ${ip}:${port}\n${conn.raw || conn.message}`,
+    conn.ok ? 'ok' : 'err',
+  );
+  if (!conn.ok) return { ok: false, why: conn.message };
+  if (!(await waitForDeviceReady(serial, 5000))) {
+    return { ok: false, why: i18n.t('连上了，但设备一直是 offline') };
+  }
+  return { ok: true, why: '' };
+}
+
+/**
+ * 投屏面板上的「开始投屏 / 重试 / 重新连接」都走这里：
+ * 先把设备弄到可用，再开投屏；日志只按真实结果写。
+ */
+async function retryMirror() {
+  const serial = currentSerial.value;
+  if (!serial) {
+    message.warning(i18n.t('没有可用的设备：先插线，或点「连接」连上无线'));
+    return;
+  }
+  const ready = await ensureDeviceReady(serial);
+  if (!ready.ok) {
+    pushLog(`设备没就绪（${serial}）：${ready.why}`, 'err');
+    message.warning(i18n.t('设备没就绪：{why}', { why: ready.why }));
+    // 不 return：还是让面板试一次，真实报错会显示在面板上
+  }
+  await restartMirror('投屏已接上');
 }
 
 /**
@@ -491,25 +541,18 @@ async function handoffToWifi(prevSerial: string) {
   if (!/:\d+$/.test(now) || /:\d+$/.test(prevSerial)) return;
   autoSwitching = true;
   try {
-    pushLog(`USB 断开，自动切到无线 ${now}`, 'info');
-    message.info(i18n.t('数据线断了，已自动切到无线'));
-    // 先等它自己恢复；不行就补一次 connect（手机 IP 没变时是幂等的），再等
-    if (!(await waitForDeviceReady(now, 3000))) {
-      const ip = now.replace(/:\d+$/, '');
-      pushLog(`再连一次无线 ${ip}:5555`, 'info');
-      await api.adbConnect(ip, 5555);
-      if (!(await waitForDeviceReady(now, 5000))) {
-        pushLog(
-          '无线设备没就绪，投屏先不自动重开（点投屏面板的「重试」）',
-          'err',
-        );
-        message.warning(
-          i18n.t(
-            '无线设备还没就绪，投屏没自动重开；过会儿点投屏面板上的「重试」',
-          ),
-        );
-        return;
-      }
+    // 先别宣布「已切到无线」——等真接上了再说
+    pushLog(`USB 断开，试着切到无线 ${now}…`, 'info');
+    message.info(i18n.t('数据线断了，正在切到无线…'));
+    const ready = await ensureDeviceReady(now);
+    if (!ready.ok) {
+      pushLog(`无线没接上：${ready.why}`, 'err');
+      message.error(
+        i18n.t('无线没接上：{why}。插回数据线点一次「开启」，再点「连接」', {
+          why: ready.why,
+        }),
+      );
+      return;
     }
     await restartMirror('投屏已接到无线上（自动用省流模式）');
   } finally {
@@ -3100,6 +3143,7 @@ function deviceSubtitle(d: AdbDevice) {
       <ScrcpyView
         ref="mirrorRef"
         :serial="currentSerial"
+        @retry="retryMirror"
         @log="(t: string) => pushLog(t)"
         @running="
           (v: boolean) => {

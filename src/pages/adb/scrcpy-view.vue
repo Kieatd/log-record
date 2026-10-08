@@ -19,6 +19,9 @@ const emit = defineEmits<{
   (e: 'log', text: string): void;
   (e: 'running', value: boolean): void;
   (e: 'starting', value: boolean): void;
+  // 面板上的「开始投屏 / 重试 / 重新连接」交给父组件处理：
+  // 父组件会先确认设备真的可用（无线可能还 offline，要先重连），再调 start()
+  (e: 'retry'): void;
 }>();
 
 const i18n = useI18n();
@@ -660,7 +663,7 @@ defineExpose({ stop, start });
       >
         <ReloadOutlined
           class="sv-icon"
-          @click="stop().then(start)"
+          @click="stop().then(() => $emit('retry'))"
         />
       </a-tooltip>
       <a-tooltip
@@ -669,7 +672,7 @@ defineExpose({ stop, start });
       >
         <PlayCircleOutlined
           class="sv-icon"
-          @click="start"
+          @click="$emit('retry')"
         />
       </a-tooltip>
       <!-- 停止：只停投屏，面板留在原位，回到待机状态 -->
@@ -700,7 +703,7 @@ defineExpose({ stop, start });
         <a-button
           size="small"
           type="primary"
-          @click="start"
+          @click="$emit('retry')"
         >
           <PlayCircleOutlined />
           {{ $t('重试') }}
@@ -715,7 +718,7 @@ defineExpose({ stop, start });
         <div class="sv-idle-title">{{ $t('还没开始投屏') }}</div>
         <a-button
           type="primary"
-          @click="start"
+          @click="$emit('retry')"
         >
           <PlayCircleOutlined />
           {{ $t('开始投屏') }}
