@@ -361,6 +361,63 @@ function stopDevicePoll() {
   devTimer = null;
 }
 
+/**
+ * 等某台设备真的变成 device 状态。
+ *
+ * 为什么要等：刚插线那几秒 adbd 会重启（实测有 10 秒左右的窗口期），adb 里可能
+ * 还没有这台设备、或状态不是 device，这时开投屏会直接报「没有可用的设备」。
+ * 状态变化才写日志，免得每 400ms 刷一行。
+ */
+async function waitForDeviceReady(serial: string, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  let shown = '';
+  for (;;) {
+    const res = await api.adbDevices();
+    const d = (res.devices || []).find((x) => x.serial === serial);
+    const state = d ? d.state : '不在列表里';
+    if (d && d.state === 'device') return true;
+    if (state !== shown) {
+      shown = state;
+      pushLog(`等设备就绪…（${serial} 现在是 ${state}）`, 'info');
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  pushLog(`等不到设备就绪（${serial} 最后状态：${shown}）`, 'err');
+  return false;
+}
+
+/** 重开投屏，并且只按真实结果写日志（不猜成功） */
+async function restartMirror(okMsg: string) {
+  const ok = await mirrorRef.value?.start();
+  if (ok) {
+    pushLog(okMsg, 'info');
+    return true;
+  }
+  pushLog(`${okMsg}——实际没接上`, 'err');
+  message.warning(i18n.t('投屏没接上，点投屏面板上的「重试」试试'));
+  return false;
+}
+
+/**
+ * 投屏面板上的「开始投屏 / 重试 / 重新连接」都走这里：
+ * 先确认设备真的出现在 adb 里（刚插线有十几秒窗口期），再开投屏；
+ * 日志只按真实结果写。
+ */
+async function retryMirror() {
+  const serial = currentSerial.value;
+  if (!serial) {
+    message.warning(i18n.t('没有可用的设备：插上数据线，选中一台设备'));
+    return;
+  }
+  if (!(await waitForDeviceReady(serial, 5000))) {
+    pushLog(`设备没就绪（${serial}，等不到 device 状态）`, 'err');
+    message.warning(i18n.t('设备还没就绪，过会儿再点「开始投屏」'));
+    return;
+  }
+  await restartMirror('投屏已接上');
+}
+
 /** 重启本机 adb server：adb 卡住（插拔也认不到设备）时这么救 */
 async function restartAdb() {
   if (!api.adbRestartServer) return;
