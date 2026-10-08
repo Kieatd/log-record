@@ -829,12 +829,21 @@ function closeFiles() {
   fileTimer = null;
 }
 
+/** 改下载位置：底部「设下载位置 / 改下载位置」按钮，随时可以重选 */
+async function changeDownloadDir() {
+  const pick = await api.pickDir(downloadDir.value || '');
+  if (pick.canceled || !pick.dir) return;
+  downloadDir.value = pick.dir;
+  localStorage.setItem(DOWNLOAD_DIR_KEY, pick.dir);
+  message.success(i18n.t('下载位置已设为 {dir}', { dir: pick.dir }));
+}
+
 /** 下载到电脑（主进程默认放 ~/Downloads，同名自动加序号），下完在 Finder 里指给你看 */
 async function downloadPhoneFile(item: { name: string; path: string }) {
-  // 先让用户挑文件夹（默认停在上次用的那个），取消就不下载
-  const pick = await api.pickDir(downloadDir.value);
-  if (pick.canceled) return;
-  if (pick.dir) {
+  // 只有第一次（还没设过）才弹选择框；选过一次就记住，之后直接下
+  if (!downloadDir.value) {
+    const pick = await api.pickDir('');
+    if (pick.canceled || !pick.dir) return;
     downloadDir.value = pick.dir;
     localStorage.setItem(DOWNLOAD_DIR_KEY, pick.dir);
   }
@@ -2743,9 +2752,16 @@ function deviceSubtitle(d: AdbDevice) {
         </div>
         <div class="file-foot">
           <span>{{ fileList.length }} {{ $t('项') }}</span>
-          <span class="file-dim">
+          <span class="file-hint">
             {{ $t('手机上往这里放文件，4 秒内会自动刷新') }}
           </span>
+          <span class="file-dim">
+            {{ $t('下载到') }}
+            {{ downloadDir || $t('（未设置，第一次下载时让你选）') }}
+          </span>
+          <a-button size="small" type="link" @click="changeDownloadDir">
+            {{ downloadDir ? $t('改下载位置') : $t('设下载位置') }}
+          </a-button>
         </div>
       </a-modal>
 
@@ -3705,6 +3721,13 @@ function deviceSubtitle(d: AdbDevice) {
 
 .file-dim {
   margin-left: auto;
+}
+
+/* 下载位置那一行：路径 + 设/改按钮都贴右 */
+.file-dim + .ant-btn-link {
+  padding: 0 2px;
+  height: auto;
+  font-size: 12px;
 }
 
 .un-toolbar {
