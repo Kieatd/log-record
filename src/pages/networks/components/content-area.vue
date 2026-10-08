@@ -3,7 +3,11 @@ import dayjs from 'dayjs';
 import { computed, ref, watch } from 'vue';
 import { message } from 'ant-design-vue';
 import BodyViewer from './body-viewer.vue';
-import { CopyOutlined, SendOutlined } from '@ant-design/icons-vue';
+import {
+  CopyOutlined,
+  SendOutlined,
+  SettingOutlined,
+} from '@ant-design/icons-vue';
 import { useI18n } from 'vue-i18n';
 
 const [messageApi, contextHolder] = message.useMessage();
@@ -166,47 +170,248 @@ watch(
   },
 );
 
+/** 从请求头里取出 authorization（key 大小写不敏感） */
+const getAuthorizationHeader = (): string => {
+  const headers = props.csn?.reqHeaders ?? {};
+  const entry = Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === 'authorization',
+  );
+  if (!entry) {
+    return '';
+  }
+  const value = String(entry[1] ?? '').trim();
+  if (!value) {
+    return '';
+  }
+  // 值里可能已经带了 "Bearer " 前缀，统一按 `Authorization: xxx` 输出
+  return `Authorization: ${value.replace(/^Authorization:\s*/i, '')}`;
+};
+
+/* ---------------- 复制请求参数（可配置） ---------------- */
+
+// 三块内容各自是否参与复制；默认全选
+const paramsParts = ref({ url: true, body: true, authorization: true });
+
+const allParamsPartsChecked = computed(() =>
+  Object.values(paramsParts.value).every(Boolean),
+);
+
+const resetParamsParts = () => {
+  paramsParts.value = { url: true, body: true, authorization: true };
+};
+
+// 一个按钮全选/全不选来回切
+const toggleAllParamsParts = () => {
+  const next = !allParamsPartsChecked.value;
+  paramsParts.value = { url: next, body: next, authorization: next };
+};
+
 /**
- * 复制请求参数：请求地址 + 空行 + 请求体。
- * 请求体为空时只复制地址。
+ * 复制请求参数：按勾选拼 请求地址 / 请求体 / Authorization，空行隔开。
+ * 没勾选任何一项时给提示，不复制空内容。
  */
 const copyRequestParams = () => {
   const url = String(props.csn?.url ?? '');
   if (!url) {
     return;
   }
-  const body = formatForCopy(props.csn?.reqBody);
-  if (!body) {
-    copyText(url);
+  const parts: string[] = [];
+  if (paramsParts.value.url) {
+    parts.push(url);
+  }
+  if (paramsParts.value.body) {
+    const body = formatForCopy(props.csn?.reqBody);
+    if (body) {
+      parts.push(body);
+    }
+  }
+  if (paramsParts.value.authorization) {
+    const auth = getAuthorizationHeader();
+    if (auth) {
+      parts.push(auth);
+    }
+  }
+  if (parts.length === 0) {
+    messageApi.warning(i18n.t('请至少勾选一项'));
     return;
   }
-  copyText(`${url}\n\n${body}`);
+  copyText(parts.join('\n\n'));
 };
+
+/* ---------------- 复制请求头（可勾选） ---------------- */
+
+// 请求头的 key 列表
+const headerKeys = computed(() => Object.keys(props.csn?.reqHeaders ?? {}));
+// key → 是否勾选；默认全选
+const checkedHeaders = ref<Record<string, boolean>>({});
+const resetCheckedHeaders = () => {
+  checkedHeaders.value = Object.fromEntries(
+    headerKeys.value.map((key) => [key, true]),
+  );
+};
+
+const allHeadersChecked = computed(
+  () =>
+    headerKeys.value.length > 0 &&
+    headerKeys.value.every((key) => checkedHeaders.value[key]),
+);
+
+// 一个按钮全选/全不选来回切
+const toggleAllHeaders = () => {
+  const next = !allHeadersChecked.value;
+  checkedHeaders.value = Object.fromEntries(
+    headerKeys.value.map((key) => [key, next]),
+  );
+};
+
+/**
+ * 复制勾选的请求头：每行一个 `key: value`，字段跟值之间用冒号。
+ * 没勾选任何请求头时给个提示，不复制空内容。
+ */
+const copyRequestHeaders = () => {
+  const headers = props.csn?.reqHeaders ?? {};
+  const lines = Object.entries(headers)
+    .filter(([key]) => checkedHeaders.value[key])
+    .map(([key, value]) => `${key}: ${String(value ?? '')}`);
+  if (lines.length === 0) {
+    messageApi.warning(i18n.t('请至少勾选一个请求头'));
+    return;
+  }
+  copyText(lines.join('\n'));
+};
+
+// 换一条请求 → 两块配置都回到「默认全选」
+// （同一条请求内保留用户的勾选）
+watch(
+  () => props.csn?.id,
+  () => {
+    resetCheckedHeaders();
+    resetParamsParts();
+  },
+  { immediate: true },
+);
 
 </script>
 
-<template v-if="csn.url">
-  <div class="format-text">
+<template>
+  <!-- 没有选中任何接口时不渲染详情：
+       v-if 必须放在这个 div 上。放在 SFC 根 <template> 上会被编译器忽略，
+       导致 csn 为空时这块内容仍然渲染出来。-->
+  <div v-if="csn?.url" class="format-text">
     <contextHolder />
     <div class="content-box">
       <!-- 复制按钮：在框内、请求地址上方（靠右） -->
       <div class="detail-toolbar">
         <!-- 展示态：复制 / 重新请求 -->
         <template v-if="!reRequestMode">
-          <a-tooltip>
-            <template #title>
-              {{ $t('复制请求地址和请求体，中间空行隔开') }}
-            </template>
-            <a-button
-              class="copy-params-btn"
-              type="text"
-              size="small"
-              @click="copyRequestParams"
+          <span class="header-copy-group">
+            <a-tooltip>
+              <template #title>
+                {{ $t('复制勾选的内容（地址 / 请求体 / Authorization）') }}
+              </template>
+              <a-button
+                class="copy-params-btn"
+                type="text"
+                size="small"
+                @click="copyRequestParams"
+              >
+                <template #icon><CopyOutlined /></template>
+                {{ $t('复制请求参数') }}
+              </a-button>
+            </a-tooltip>
+            <a-popover
+              trigger="click"
+              placement="bottomRight"
+              :overlay-style="{ width: '280px' }"
             >
-              <template #icon><CopyOutlined /></template>
-              {{ $t('复制请求参数') }}
-            </a-button>
-          </a-tooltip>
+              <template #title>
+                <div class="header-copy-header">
+                  <span>{{ $t('设置要复制的内容') }}</span>
+                  <a-button
+                    type="link"
+                    size="small"
+                    @click="toggleAllParamsParts"
+                  >
+                    {{ allParamsPartsChecked ? $t('全不选') : $t('全选') }}
+                  </a-button>
+                </div>
+              </template>
+              <template #content>
+                <div class="header-copy-list">
+                  <a-checkbox v-model:checked="paramsParts.url">
+                    {{ $t('请求地址') }}
+                  </a-checkbox>
+                  <a-checkbox v-model:checked="paramsParts.body">
+                    {{ $t('请求体') }}
+                  </a-checkbox>
+                  <a-checkbox v-model:checked="paramsParts.authorization">
+                    {{ $t('Authorization 请求头') }}
+                  </a-checkbox>
+                </div>
+              </template>
+              <a-tooltip>
+                <template #title>{{ $t('设置要复制的内容') }}</template>
+                <span class="header-copy-setting">
+                  <SettingOutlined />
+                </span>
+              </a-tooltip>
+            </a-popover>
+          </span>
+          <span v-if="headerKeys.length !== 0" class="header-copy-group">
+            <a-tooltip>
+              <template #title>
+                {{ $t('复制勾选的请求头，每行 key: value') }}
+              </template>
+              <a-button
+                class="copy-params-btn"
+                type="text"
+                size="small"
+                @click="copyRequestHeaders"
+              >
+                <template #icon><CopyOutlined /></template>
+                {{ $t('复制请求头') }}
+              </a-button>
+            </a-tooltip>
+            <a-popover
+              trigger="click"
+              placement="bottomRight"
+              :overlay-style="{ width: '360px' }"
+            >
+              <template #title>
+                <div class="header-copy-header">
+                  <span>{{ $t('设置要复制的请求头') }}</span>
+                  <a-button
+                    type="link"
+                    size="small"
+                    @click="toggleAllHeaders"
+                  >
+                    {{ allHeadersChecked ? $t('全不选') : $t('全选') }}
+                  </a-button>
+                </div>
+              </template>
+              <template #content>
+                <div class="header-copy-tip">
+                  {{ $t('勾选要复制的请求头，默认全选') }}
+                </div>
+                <div class="header-copy-list">
+                  <a-checkbox
+                    v-for="key in headerKeys"
+                    :key="key"
+                    v-model:checked="checkedHeaders[key]"
+                    class="header-copy-item"
+                  >
+                    {{ key }}
+                  </a-checkbox>
+                </div>
+              </template>
+              <a-tooltip>
+                <template #title>{{ $t('设置要复制的请求头') }}</template>
+                <span class="header-copy-setting">
+                  <SettingOutlined />
+                </span>
+              </a-tooltip>
+            </a-popover>
+          </span>
           <a-tooltip>
             <template #title>
               {{ $t('修改请求头和请求体后重新发送（由本机发出）') }}
@@ -520,6 +725,52 @@ const copyRequestParams = () => {
 .copy-params-btn:hover {
   background-color: rgba(51, 102, 102, 0.1);
   color: var(--color-main);
+}
+
+/* 复制请求头弹层：可勾选要复制的请求头 */
+.header-copy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.header-copy-tip {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #8c8c8c;
+}
+.header-copy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.header-copy-item {
+  word-break: break-all;
+}
+/* 「复制…」+ 小设置按钮 成组 */
+.header-copy-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+/* 组内复制按钮的右内边距收窄，让小齿轮紧贴文字 */
+.header-copy-group .copy-params-btn {
+  padding-right: 2px;
+}
+.header-copy-setting {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--color-main);
+}
+.header-copy-setting:hover {
+  background-color: rgba(51, 102, 102, 0.1);
 }
 
 .content-box {

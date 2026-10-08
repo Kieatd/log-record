@@ -145,8 +145,11 @@ const useNetworkStore = defineStore('network', () => {
       selectedRequest.value = {};
     }
   };
-  const select = (selectedKeys: string) => {
-    selectedRequest.value = requests.value[selectedKeys[0]];
+  const select = (selectedKeys: string[] = []) => {
+    // 取消选中（selectedKeys 为空）时回落到空对象。
+    // 否则 selectedRequest 会变成 undefined，详情组件读 csn.url 会报错，
+    // DOM 停在上一次的内容上 —— 看着就是「没选中任何接口，右侧还显示着详情」。
+    selectedRequest.value = requests.value?.[selectedKeys?.[0]] ?? {};
   };
   const setSearchFilter = (filter: Partial<SearchFilterType>) => {
     Object.assign(searchFilter.value, filter);

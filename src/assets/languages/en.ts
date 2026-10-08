@@ -56,6 +56,19 @@ export default {
     'Cleared unmarked requests, kept {count} marked',
   复制请求体完整内容: 'Copy the full request body',
   复制请求参数: 'Copy request params',
+  复制请求头: 'Copy request headers',
+  '设置要复制的请求头': 'Choose which headers to copy',
+  '复制勾选的请求头，每行 key: value':
+    'Copy the checked headers, one per line as key: value',
+  '请至少勾选一个请求头': 'Check at least one header to copy',
+  '勾选要复制的请求头，默认全选':
+    'Check the headers to copy. All checked by default',
+  '设置要复制的内容': 'Choose what to copy',
+  '复制勾选的内容（地址 / 请求体 / Authorization）':
+    'Copy the checked content (URL / body / Authorization)',
+  请求地址: 'Request URL',
+  'Authorization 请求头': 'Authorization header',
+  '请至少勾选一项': 'Check at least one item',
   重新请求: 'Re-send',
   发送请求: 'Send request',
   请求地址不能为空: 'Request URL is missing',
@@ -68,8 +81,8 @@ export default {
   请求体: 'Request body',
   '请求体（GET/HEAD 会被忽略）': 'Body (ignored for GET/HEAD)',
   请求失败: 'Request failed',
-  '复制请求地址和请求体，中间空行隔开':
-    'Copy the request URL and body, separated by a blank line',
+  '复制请求地址和请求体，Authorization 请求头放在最后':
+    'Copy the request URL and body, with the Authorization header at the end',
   复制响应体完整内容: 'Copy the full response body',
   新增规则: 'Add rule',
   '关键词，如 generate_204': 'Keyword, e.g. generate_204',
