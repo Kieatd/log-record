@@ -501,19 +501,6 @@ async function autoConnectWifi() {
   }
 }
 
-/** 在手机上打开接收目录 */
-async function openFolderOnPhone() {
-  if (!ready.value) {
-    message.warning(i18n.t('先插上线，选中一台设备'));
-    return;
-  }
-  const res = await api.adbOpenFolder(pushDest.value, currentSerial.value);
-  pushLog(res.message, res.ok ? 'ok' : 'err');
-  (res.steps || []).forEach((x) => pushLog(`  ${x}`, 'info'));
-  if (res.ok) message.success(res.message);
-  else message.error(res.message);
-}
-
 // 手机上的「adb 安装需要确认」：true=需要确认（会弹安装界面），false=静默装
 const installConfirm = ref<boolean | null>(null);
 
@@ -1316,11 +1303,9 @@ const pushElapsed = ref(0);
 const pushTaskId = ref('');
 let pushTimer: ReturnType<typeof setInterval> | null = null;
 
-const PUSH_DEST_KEY = 'Log Record$$pushDest';
-const pushDest = ref(
-  localStorage.getItem(PUSH_DEST_KEY) || '/sdcard/Download/',
-);
-const pushDestOpen = ref(false);
+/** 这个磁贴 = 手机上下载目录的映射，写死在这里 */
+const pushDest = ref('/sdcard/Download/');
+
 /* ---------------- 手机文件（电脑上直接看 / 操作手机目录） ---------------- */
 const filesOpen = ref(false);
 const fileLoading = ref(false);
@@ -1354,13 +1339,6 @@ const customClearAfter = ref(localStorage.getItem(CUSTOM_CLEAR_KEY) !== '0');
 watch(customClearAfter, (v) =>
   localStorage.setItem(CUSTOM_CLEAR_KEY, v ? '1' : '0'),
 );
-
-function savePushDest() {
-  const v = pushDest.value.trim() || '/sdcard/Download/';
-  pushDest.value = v.endsWith('/') ? v : `${v}/`;
-  localStorage.setItem(PUSH_DEST_KEY, pushDest.value);
-  pushDestOpen.value = false;
-}
 
 const pushMb = computed(() => {
   const st = pushState.value;
@@ -1919,7 +1897,7 @@ function deviceSubtitle(d: AdbDevice) {
       <div class="tile-grid">
         <!-- 拖 APK 安装 -->
         <div
-          class="tile tile-column"
+          class="tile"
           :class="{
             'tile-drop': dragging,
             'tile-disabled': !ready || installing,
@@ -2264,7 +2242,7 @@ function deviceSubtitle(d: AdbDevice) {
           class="tile tile-column"
           :class="{
             'tile-drop': pushDragging,
-            'tile-disabled': !ready || pushing,
+            'tile-disabled': !ready,
           }"
           @dragover="onPushDragOver"
           @dragleave="onPushDragLeave"
@@ -2272,16 +2250,16 @@ function deviceSubtitle(d: AdbDevice) {
         >
           <div
             class="tile-main"
-            @click="ready && !pushing && pickAndPush()"
+            @click="ready && !pushing && openFiles()"
           >
             <div class="tile-icon">
               <LoadingOutlined
                 v-if="pushing"
                 spin
               />
-              <UploadOutlined v-else />
+              <FolderOpenOutlined v-else />
             </div>
-            <div class="tile-title">{{ $t('传文件到手机') }}</div>
+            <div class="tile-title">{{ $t('手机文件') }}</div>
             <template v-if="pushing">
               <a-progress
                 :percent="pushState?.percent ?? 0"
@@ -2309,73 +2287,15 @@ function deviceSubtitle(d: AdbDevice) {
               </a-button>
             </template>
             <template v-else>
-              <div class="tile-desc">
+              <div class="tile-desc">{{ pushDest }}</div>
+              <div class="tile-desc tile-dim">
                 {{
                   pushDragging
-                    ? $t('松手就开始传')
-                    : $t('把文件拖到这里，或点击选择')
+                    ? $t('松手就传进这个目录')
+                    : $t('点开看目录内容，也可以把文件拖进来')
                 }}
               </div>
             </template>
-          </div>
-
-          <!-- 右：配置（两个入口一直显示） -->
-          <div class="tile-foot">
-            <span
-              class="tile-guard"
-              @click.stop
-              @mousedown.stop
-            >
-              <a-tooltip :title="$t('在这个目录里下载 / 改名 / 删除文件')">
-                <div
-                  class="tile-side-entry"
-                  :class="{ 'tile-side-entry-off': !ready }"
-                  @click="openFiles"
-                >
-                  <FolderFilled class="tile-side-entry-icon" />
-                  <div class="tile-side-entry-label">
-                    {{ $t('管理文件') }}
-                  </div>
-                </div>
-              </a-tooltip>
-            </span>
-            <div class="tile-side-divider"></div>
-            <span
-              class="tile-guard"
-              @click.stop
-              @mousedown.stop
-            >
-              <a-tooltip :title="$t('在手机上打开这个文件夹')">
-                <div
-                  class="tile-side-entry"
-                  :class="{ 'tile-side-entry-off': !ready }"
-                  @click="openFolderOnPhone"
-                >
-                  <FolderOpenOutlined class="tile-side-entry-icon" />
-                  <div class="tile-side-entry-label">
-                    {{ $t('打开接收目录') }}
-                  </div>
-                </div>
-              </a-tooltip>
-            </span>
-            <div class="tile-side-divider"></div>
-            <span
-              class="tile-guard"
-              @click.stop
-              @mousedown.stop
-            >
-              <a-tooltip :title="$t('改接收目录')">
-                <div
-                  class="tile-side-entry"
-                  @click="pushDestOpen = true"
-                >
-                  <SettingOutlined class="tile-side-entry-icon" />
-                  <div class="tile-side-entry-label">
-                    {{ $t('改接收目录') }}
-                  </div>
-                </div>
-              </a-tooltip>
-            </span>
           </div>
         </div>
       </div>
@@ -2802,36 +2722,6 @@ function deviceSubtitle(d: AdbDevice) {
       </a-modal>
 
       <!-- 传文件的接收目录 -->
-      <a-modal
-        v-model:open="pushDestOpen"
-        :title="$t('手机上的接收目录')"
-        :footer="null"
-        width="420px"
-      >
-        <a-input
-          v-model:value="pushDest"
-          size="small"
-          placeholder="/sdcard/Download/"
-        />
-        <div class="mk-tip">
-          {{ $t('默认放到 Download 目录，手机上打开「文件管理」就能看到') }}
-        </div>
-        <div class="mk-foot">
-          <a-button
-            size="small"
-            @click="pushDestOpen = false"
-          >
-            {{ $t('取消') }}
-          </a-button>
-          <a-button
-            size="small"
-            type="primary"
-            @click="savePushDest"
-          >
-            {{ $t('保存') }}
-          </a-button>
-        </div>
-      </a-modal>
 
       <!-- 截图记录 -->
       <a-modal
