@@ -291,6 +291,13 @@ export default {
   设下载位置: 'Set folder',
   改下载位置: 'Change folder',
   '下载位置已设为 {dir}': 'Download folder set to {dir}',
+  '从电脑拖文件进来即可上传；手机上放文件 4 秒内自动刷新':
+    'Drag files from your Mac to upload; files added on the phone show up within 4 seconds',
+  松手就传到: 'Drop to upload into',
+  '没拿到文件路径，请点「上传」按钮':
+    'Could not read the file path — use the Upload button instead',
+  '这个目录是空的（从电脑拖文件进来，或点右上角「上传」）':
+    'This folder is empty (drag files here, or use Upload at the top right)',
   '先选一个要测的应用': 'Pick an app to test first',
   '点这里开始跑': 'Click to run',
   '插线开启一次，之后可拔线': 'Enable once while plugged in, then unplug',

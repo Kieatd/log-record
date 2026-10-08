@@ -771,9 +771,13 @@ async function loadPhoneFiles() {
         path: `${fileDir.value}${name}`,
       });
     }
-    out.sort((a, b) =>
-      a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1,
-    );
+    // 文件夹在前（按名字），文件在后 —— 文件按时间降序，最新的排最上面
+    out.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      if (a.isDir) return a.name.localeCompare(b.name);
+      // time 是 "YYYY-MM-DD HH:mm"，字符串比较就等于时间比较，倒过来就是降序
+      return b.time.localeCompare(a.time);
+    });
     fileList.value = out;
   } catch (err) {
     pushLog(err instanceof Error ? err.message : String(err), 'err');
@@ -1632,11 +1636,57 @@ function blockWindowDrop(e: DragEvent) {
   e.preventDefault();
 }
 
+/* ------- 手机文件弹窗开着时，从电脑拖文件进来 = 传到手机当前目录 ------- */
+
+const fileDropActive = ref(false);
+
+/** 拖拽中：弹窗开着才接管，同时给列表区加投放高亮 */
+function onFileDragOver(e: DragEvent) {
+  e.preventDefault();
+  if (!filesOpen.value) return;
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  fileDropActive.value = true;
+}
+
+/** relatedTarget 为空 = 真的拖出窗口了；在窗口内部元素之间挪动不算离开 */
+function onFileDragLeave(e: DragEvent) {
+  if (e.relatedTarget) return;
+  fileDropActive.value = false;
+}
+
+async function onFileDrop(e: DragEvent) {
+  e.preventDefault();
+  if (!filesOpen.value) return;
+  fileDropActive.value = false;
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (!files.length) return;
+  const paths: string[] = [];
+  for (const f of files) {
+    try {
+      const p = api.getPathForFile(f);
+      if (p) paths.push(p);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!paths.length) {
+    message.warning(i18n.t('没拿到文件路径，请点「上传」按钮'));
+    return;
+  }
+  // 传到当前打开的目录，传完重新读一次列表
+  await doPush(paths, fileDir.value);
+  await loadPhoneFiles();
+}
+
 let offOutput: (() => void) | null = null;
 
 onMounted(async () => {
   window.addEventListener('dragover', blockWindowDrop);
   window.addEventListener('drop', blockWindowDrop);
+  // 手机文件弹窗开着时，拖文件到窗口里直接传到当前目录
+  window.addEventListener('dragover', onFileDragOver);
+  window.addEventListener('dragleave', onFileDragLeave);
+  window.addEventListener('drop', onFileDrop);
   if (api.onAdbOutput) {
     api.onAdbOutput((payload: { text: string }) => pushLog(payload.text));
   }
@@ -1746,6 +1796,9 @@ onActivated(() => {
 onUnmounted(() => {
   window.removeEventListener('dragover', blockWindowDrop);
   window.removeEventListener('drop', blockWindowDrop);
+  window.removeEventListener('dragover', onFileDragOver);
+  window.removeEventListener('dragleave', onFileDragLeave);
+  window.removeEventListener('drop', onFileDrop);
   offOutput?.();
   if (fileTimer) clearInterval(fileTimer);
 });
@@ -2682,7 +2735,17 @@ function deviceSubtitle(d: AdbDevice) {
             {{ $t('上传') }}
           </a-button>
         </div>
-        <div class="un-list file-list">
+        <div
+          class="un-list file-list"
+          :class="{ 'file-drop-active': fileDropActive }"
+        >
+          <!-- 拖拽中：提示松手就传到当前目录 -->
+          <div
+            v-if="fileDropActive"
+            class="file-drop-mask"
+          >
+            {{ $t('松手就传到') }} {{ fileDir }}
+          </div>
           <div
             v-if="!fileList.length"
             class="un-empty"
@@ -2690,7 +2753,7 @@ function deviceSubtitle(d: AdbDevice) {
             {{
               fileLoading
                 ? $t('读取中…')
-                : $t('这个目录是空的（把文件拖到磁贴上就会传到这里）')
+                : $t('这个目录是空的（从电脑拖文件进来，或点右上角「上传」）')
             }}
           </div>
           <div
@@ -2753,7 +2816,7 @@ function deviceSubtitle(d: AdbDevice) {
         <div class="file-foot">
           <span>{{ fileList.length }} {{ $t('项') }}</span>
           <span class="file-hint">
-            {{ $t('手机上往这里放文件，4 秒内会自动刷新') }}
+            {{ $t('从电脑拖文件进来即可上传；手机上放文件 4 秒内自动刷新') }}
           </span>
           <span class="file-dim">
             {{ $t('下载到') }}
@@ -3689,7 +3752,31 @@ function deviceSubtitle(d: AdbDevice) {
 }
 
 .file-list {
+  position: relative;
   max-height: 420px;
+}
+
+/* 拖文件进弹窗：列表区给出虚线投放框 */
+.file-drop-active {
+  border-color: #336666;
+  border-style: dashed;
+  background-color: #3366660d;
+}
+
+.file-drop-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #336666;
+  font-size: 13px;
+  text-align: center;
+  /* 别挡住 dragover / drop 事件 */
+  pointer-events: none;
 }
 
 /* 文件夹行：能点进去 */
