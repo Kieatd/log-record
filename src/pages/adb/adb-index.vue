@@ -831,9 +831,16 @@ function closeFiles() {
 
 /** 下载到电脑（主进程默认放 ~/Downloads，同名自动加序号），下完在 Finder 里指给你看 */
 async function downloadPhoneFile(item: { name: string; path: string }) {
+  // 先让用户挑文件夹（默认停在上次用的那个），取消就不下载
+  const pick = await api.pickDir(downloadDir.value);
+  if (pick.canceled) return;
+  if (pick.dir) {
+    downloadDir.value = pick.dir;
+    localStorage.setItem(DOWNLOAD_DIR_KEY, pick.dir);
+  }
   fileBusy.value = item.path;
   try {
-    const res = await api.adbPull(item.path, '', currentSerial.value);
+    const res = await api.adbPull(item.path, downloadDir.value, currentSerial.value);
     if (res.ok) {
       pushLog(`$ adb pull ${item.path}\n  → ${res.localPath}`, 'ok');
       message.success(i18n.t(`已下载到 ${res.localPath}`));
@@ -1343,6 +1350,9 @@ const pushDest = ref('/sdcard/Download/');
 const filesOpen = ref(false);
 const fileLoading = ref(false);
 const fileBusy = ref('');
+/** 上次下载到的电脑文件夹（下次弹选择框时默认停在这儿） */
+const DOWNLOAD_DIR_KEY = 'Log Record$$downloadDir';
+const downloadDir = ref(localStorage.getItem(DOWNLOAD_DIR_KEY) || '');
 const fileList = ref<
   { name: string; isDir: boolean; size: number; time: string; path: string }[]
 >([]);

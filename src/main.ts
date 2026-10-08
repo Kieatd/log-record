@@ -503,6 +503,20 @@ const createWindow = () => {
 
   // 在电脑的文件管理器里把这个文件/目录显示出来
 
+  // 让用户挑一个电脑上的文件夹（下载到电脑时用）
+  ipcMain.handle('app:pickDir', async (_, defaultPath?: string) => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要下载到的文件夹',
+      defaultPath: defaultPath || app.getPath('downloads'),
+      properties: ['openDirectory', 'createDirectory'],
+      buttonLabel: '下载到这里',
+    });
+    if (res.canceled || !res.filePaths.length) {
+      return { canceled: true, dir: '' };
+    }
+    return { canceled: false, dir: res.filePaths[0] };
+  });
+
   ipcMain.handle('app:revealPath', (_, target: string) => {
     try {
       shell.showItemInFolder(target);
