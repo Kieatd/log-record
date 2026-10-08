@@ -3,6 +3,7 @@ import {
   computed,
   nextTick,
   onActivated,
+  onDeactivated,
   onMounted,
   onUnmounted,
   reactive,
@@ -159,7 +160,7 @@ interface InstallProgressState {
 const installState = ref<InstallProgressState | null>(null);
 const installElapsed = ref(0);
 let installTimer: ReturnType<typeof setInterval> | null = null;
-/** 定期刷设备列表：拔线/插线、以及 tcpip 重启 adbd 导致 USB 记录短暂消失，都要能自己长回来 */
+/** 定期刷设备列表：插线/拔线不会通知我们，靠它自己长出来（见 startDevicePoll） */
 let devTimer: ReturnType<typeof setInterval> | null = null;
 
 /** 包名 → 安装时间（毫秒）。ADB 不直接给，要解析 dumpsys package */
@@ -177,8 +178,6 @@ const autoStayOnDone = new Set<string>();
 
 // 投屏面板常驻在右侧，不提供收起 —— 这就是想要的默认布局
 const mirrorRunning = ref(false);
-/** 自动切换无线时防止重入 */
-
 const mirrorRef = ref<{
   start: () => Promise<boolean>;
   stop: () => Promise<void>;
@@ -269,7 +268,7 @@ function groupSubtitle(g: {
   return parts.join(' · ');
 }
 
-async function loadDevices() {
+async function loadDevices(silent = false) {
   loadingDevices.value = true;
   try {
     const res = await api.adbDevices();
@@ -277,13 +276,16 @@ async function loadDevices() {
     // adb server 里可能还残留着以前连过的 ip:5555 条目，这里直接忽略，
     // 免得它混进设备卡片、被当成一台可选设备。
     devices.value = (res.devices || []).filter((d) => d.connection !== 'wifi');
+    // silent：轮询调用时不往输出面板刷（否则每 3 秒刷一行）
     if (!res.ok) {
-      pushLog(res.message, 'err');
+      if (!silent) pushLog(res.message, 'err');
     } else if (!devices.value.length) {
-      pushLog(
-        i18n.t('没有检测到设备，检查数据线和手机上的「允许 USB 调试」'),
-        'err',
-      );
+      if (!silent) {
+        pushLog(
+          i18n.t('没有检测到设备，检查数据线和手机上的「允许 USB 调试」'),
+          'err',
+        );
+      }
     }
     // 自动选中第一台可以用的
     if (!devices.value.some((d) => d.serial === currentSerial.value)) {
@@ -299,13 +301,19 @@ async function loadDevices() {
   void refreshUsbHint();
 }
 
-/** 没可用设备时，读一眼 USB 描述符：手机插着但没开 USB 调试的话，在这里就能看出来 */
-async function refreshUsbHint() {
+/**
+ * 没可用设备时，读一眼 USB 描述符：手机插着但没开 USB 调试的话，在这里就能看出来。
+ * force=true 用于手动「重新扫描」；轮询调用（force=false）会节流 —— ioreg 一次要几百毫秒。
+ */
+let lastUsbScanAt = 0;
+async function refreshUsbHint(force = false) {
   if (!api.usbScanPhones) return;
   if (devices.value.some((d) => d.state === 'device')) {
     usbPhones.value = [];
     return;
   }
+  if (!force && Date.now() - lastUsbScanAt < 10000) return;
+  lastUsbScanAt = Date.now();
   try {
     const res = await api.usbScanPhones();
     const phones = res?.supported ? res.phones || [] : [];
@@ -331,6 +339,26 @@ const usbStuckPhone = computed(
 /** 重新扫描 + 检测 USB（给提示条上的「重新检查」用） */
 async function recheckDevices() {
   await loadDevices();
+  await refreshUsbHint(true);
+}
+
+/**
+ * 定期刷设备列表。
+ * 为什么需要：插线/拔线不会通知我们，不轮询就只能手点「重新扫描」。
+ * 刚插线那几秒 adb 里也可能还没有设备（adbd 重启），所以要刷得勤一点。
+ */
+const DEV_POLL_MS = 3000;
+function startDevicePoll() {
+  if (devTimer) return;
+  devTimer = setInterval(() => {
+    if (loadingDevices.value) return; // 上一次还没回来，跳过这一轮
+    void loadDevices(true);
+  }, DEV_POLL_MS);
+}
+function stopDevicePoll() {
+  if (!devTimer) return;
+  clearInterval(devTimer);
+  devTimer = null;
 }
 
 /** 重启本机 adb server：adb 卡住（插拔也认不到设备）时这么救 */
@@ -1582,6 +1610,7 @@ onMounted(async () => {
   await loadAdb();
   localIp.value = await api.getIPAddress();
   await loadDevices();
+  startDevicePoll(); // 插线/拔线自己长出来，不用手点「重新扫描」
   // 这两个都各自要跑几次 adb，串着等会让页面半天才可交互 —— 并行发出去
   loadStayAwake();
   loadInstallConfirm();
@@ -1589,6 +1618,7 @@ onMounted(async () => {
 
 onActivated(() => {
   // keep-alive 缓存了页面，切回来时刷新一下设备（可能刚插线/刚拔线）
+  startDevicePoll();
   loadDevices().then(() => {
     loadStayAwake();
     loadInstallConfirm();
@@ -1598,7 +1628,10 @@ onActivated(() => {
   loadLatestShot();
 });
 
+onDeactivated(stopDevicePoll);
+
 onUnmounted(() => {
+  stopDevicePoll();
   window.removeEventListener('dragover', blockWindowDrop);
   window.removeEventListener('drop', blockWindowDrop);
   window.removeEventListener('dragover', onFileDragOver);
