@@ -111,9 +111,17 @@ export async function startScrcpy(options: ScrcpyStartOptions): Promise<{
       ? usable.find((d) => (d as any).serial === options.serial)
       : usable[0];
     if (!target) {
+      // 把 adb 现在真实有什么也报出来，别只说一句「没设备」：
+      // 一眼就能分出是「列表里压根没有」还是「serial 对不上」
+      const list =
+        devices
+          .map((d) => `${(d as any).serial}(${(d as any).state})`)
+          .join('、') || '一个都没有';
       return {
         ok: false,
-        message: '没有可用的设备（状态必须是 device）',
+        message:
+          `没有可用的设备（状态必须是 device）；` +
+          `要的：${options.serial || '任意'}；adb 里现在：${list}`,
       };
     }
 

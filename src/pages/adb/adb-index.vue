@@ -179,9 +179,10 @@ const mirrorRunning = ref(false);
 /** 自动切换无线时防止重入 */
 let autoSwitching = false;
 
-const mirrorRef = ref<{ start: () => void; stop: () => Promise<void> } | null>(
-  null,
-);
+const mirrorRef = ref<{
+  start: () => Promise<boolean>;
+  stop: () => Promise<void>;
+} | null>(null);
 
 const stayAwake = ref<StayAwakeState | null>(null);
 const busyStayOn = ref(false);
@@ -294,13 +295,63 @@ function groupSubtitle(g: {
 /**
  * 换通道后把投屏按新通道的参数重开。
  * USB → 1024/30fps/4Mbps；无线 → 720p/20fps/2Mbps（scrcpy-view 里按 serial 判断）。
- * 等一拍再开：selectDevice 只改了 currentSerial，props 要下一个 tick 才更新。
+ * 先等设备真的变成 device 再开：刚 connect / 刚拔线那一会儿，adb 里的状态可能是 offline，
+ * 这时开 scrcpy 会直接报「没有可用的设备（状态必须是 device）」。
  */
-async function reopenMirror(wasRunning: boolean) {
+async function reopenMirror(wasRunning: boolean, timeoutMs = 5000) {
   if (!wasRunning || mirrorRunning.value) return;
-  await new Promise((r) => setTimeout(r, 500));
-  mirrorRef.value?.start();
-  pushLog('投屏已按新通道的参数重开', 'info');
+  // selectDevice 只改了 currentSerial，props 要下一个 tick 才更新，先等一拍
+  await new Promise((r) => setTimeout(r, 300));
+  const serial = currentSerial.value;
+  if (!(await waitForDeviceReady(serial, timeoutMs))) {
+    pushLog(
+      `设备还没就绪（${serial}），投屏先不自动重开（点投屏面板的「重试」）`,
+      'err',
+    );
+    message.warning(
+      i18n.t('设备还没就绪，投屏没自动重开；过会儿点投屏面板上的「重试」'),
+    );
+    return;
+  }
+  await restartMirror('投屏已按新通道的参数重开');
+}
+
+/**
+ * 等某台设备真的变成 device 状态。
+ *
+ * 为什么要等：刚拔线 / 刚 adb connect 那一小会儿，设备在 adb 里的状态可能还是
+ * offline 或还没重新报到，这时开投屏会直接失败，而不是晚一秒自己能好。
+ * 状态变化才写日志，免得每 400ms 刷一行。
+ */
+async function waitForDeviceReady(serial: string, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  let shown = '';
+  for (;;) {
+    const res = await api.adbDevices();
+    const d = (res.devices || []).find((x) => x.serial === serial);
+    const state = d ? d.state : '不在列表里';
+    if (d && d.state === 'device') return true;
+    if (state !== shown) {
+      shown = state;
+      pushLog(`等设备就绪…（${serial} 现在是 ${state}）`, 'info');
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  pushLog(`等不到设备就绪（${serial} 最后状态：${shown}）`, 'err');
+  return false;
+}
+
+/** 重开投屏，并且只按真实结果写日志（不猜成功） */
+async function restartMirror(okMsg: string) {
+  const ok = await mirrorRef.value?.start();
+  if (ok) {
+    pushLog(okMsg, 'info');
+    return true;
+  }
+  pushLog(`${okMsg}——实际没接上`, 'err');
+  message.warning(i18n.t('投屏没接上，点投屏面板上的「重试」试试'));
+  return false;
 }
 
 async function switchTransport(
@@ -442,9 +493,25 @@ async function handoffToWifi(prevSerial: string) {
   try {
     pushLog(`USB 断开，自动切到无线 ${now}`, 'info');
     message.info(i18n.t('数据线断了，已自动切到无线'));
-    await new Promise((r) => setTimeout(r, 800));
-    mirrorRef.value?.start();
-    pushLog('投屏已接到无线上（自动用省流模式）', 'info');
+    // 先等它自己恢复；不行就补一次 connect（手机 IP 没变时是幂等的），再等
+    if (!(await waitForDeviceReady(now, 3000))) {
+      const ip = now.replace(/:\d+$/, '');
+      pushLog(`再连一次无线 ${ip}:5555`, 'info');
+      await api.adbConnect(ip, 5555);
+      if (!(await waitForDeviceReady(now, 5000))) {
+        pushLog(
+          '无线设备没就绪，投屏先不自动重开（点投屏面板的「重试」）',
+          'err',
+        );
+        message.warning(
+          i18n.t(
+            '无线设备还没就绪，投屏没自动重开；过会儿点投屏面板上的「重试」',
+          ),
+        );
+        return;
+      }
+    }
+    await restartMirror('投屏已接到无线上（自动用省流模式）');
   } finally {
     autoSwitching = false;
   }

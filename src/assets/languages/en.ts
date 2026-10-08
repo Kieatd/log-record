@@ -244,6 +244,12 @@ export default {
 
   '投屏没在跑（可能被重启过），请点「开始投屏」重新连': 'Mirroring is not running (the app may have restarted). Click "Start mirroring" again',
   '投屏会在手机上启动一个服务，需要时再开': 'Mirroring starts a service on the phone — start it only when needed',
+  '设备还没就绪，投屏没自动重开；过会儿点投屏面板上的「重试」':
+    'The device is not ready yet — mirroring was not restarted; try “Retry” in the mirror panel',
+  '无线设备还没就绪，投屏没自动重开；过会儿点投屏面板上的「重试」':
+    'The wireless device is not ready yet — mirroring was not restarted; try “Retry” in the mirror panel',
+  '投屏没接上，点投屏面板上的「重试」试试':
+    'Mirroring did not connect — try “Retry” in the mirror panel',
   '重试': 'Retry',
   '停止投屏': 'Stop mirroring',
     'Monkey 压测': 'Monkey stress test',

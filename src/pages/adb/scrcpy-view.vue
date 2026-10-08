@@ -186,8 +186,9 @@ function onPacket(packet: {
     .catch(() => {});
 }
 
-async function start() {
-  if (running.value || starting.value) return;
+async function start(): Promise<boolean> {
+  // 已经在跑（或正在起）就交给它，不当失败
+  if (running.value || starting.value) return true;
   starting.value = true;
   errorText.value = '';
   meta.value = null;
@@ -224,7 +225,7 @@ async function start() {
     if (!res.ok) {
       errorText.value = res.message;
       starting.value = false;
-      return;
+      return false;
     }
     running.value = true;
     emit('running', true);
@@ -236,8 +237,10 @@ async function start() {
     }, 1000);
     checkScreenAwake();
     awakeTimer = setInterval(checkScreenAwake, 3000);
+    return true;
   } catch (err: any) {
     errorText.value = err?.message || String(err);
+    return false;
   } finally {
     starting.value = false;
   }
