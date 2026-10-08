@@ -209,6 +209,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('adb:foreground', serial),
   adbScreenSize: (serial?: string) =>
     ipcRenderer.invoke('adb:screenSize', serial),
+  adbPull: (remotePath: string, destDir: string, serial?: string) =>
+    ipcRenderer.invoke('adb:pull', { remotePath, destDir, serial }),
+  revealPath: (target: string) => ipcRenderer.invoke('app:revealPath', target),
+
   adbShell: (command: string, serial?: string) =>
     ipcRenderer.invoke('adb:shell', { command, serial }),
   onAdbOutput: (callback: any) =>

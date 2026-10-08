@@ -37,6 +37,9 @@ import {
   UploadOutlined,
   UsbOutlined,
   WifiOutlined,
+  FolderFilled,
+  FileOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons-vue';
 import ScrcpyView from './scrcpy-view.vue';
 
@@ -735,6 +738,163 @@ function onDragOver(e: DragEvent) {
 function onDragLeave() {
   dragging.value = false;
 }
+/* ---------------- 手机文件 ---------------- */
+
+/** 手机上文件名可能带空格、中文、单引号，拼 shell 命令时要包好 */
+function shq(text: string): string {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+function fmtSize(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+/**
+ * 读手机目录。
+ * ls -l 在这台手机上的样子：
+ *   -rw-rw---- 1 root sdcard_rw 19241417 2026-09-11 15:44 名字里可以有空格 2.docx
+ * 所以按「权限 链接 属主 属组 大小 日期 时间 剩余全是名字」来切。
+ */
+async function loadPhoneFiles() {
+  if (!currentSerial.value || !ready.value) return;
+  fileLoading.value = true;
+  try {
+    const res = await api.adbShell(
+      `ls -l ${shq(fileDir.value)}`,
+      currentSerial.value,
+    );
+    const out: typeof fileList.value = [];
+    for (const line of String(res.message || '').split('\n')) {
+      const m = line.match(
+        /^([-dl])[rwxsStT-]{9}\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+(.+)$/,
+      );
+      if (!m) continue;
+      const name = m[5].trim();
+      if (!name || name === '.' || name === '..') continue;
+      out.push({
+        name,
+        isDir: m[1] === 'd',
+        size: Number(m[2]),
+        time: `${m[3]} ${m[4]}`,
+        path: `${fileDir.value}${name}`,
+      });
+    }
+    out.sort((a, b) =>
+      a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1,
+    );
+    fileList.value = out;
+  } catch (err) {
+    pushLog(err instanceof Error ? err.message : String(err), 'err');
+  } finally {
+    fileLoading.value = false;
+  }
+}
+
+function openFiles() {
+  filesOpen.value = true;
+  void loadPhoneFiles();
+  if (fileTimer) clearInterval(fileTimer);
+  // 手机上往这个目录里放东西，这边几秒内自己就看见了
+  fileTimer = setInterval(() => {
+    if (filesOpen.value && !fileBusy.value) void loadPhoneFiles();
+  }, 4000);
+}
+
+function closeFiles() {
+  filesOpen.value = false;
+  if (fileTimer) clearInterval(fileTimer);
+  fileTimer = null;
+}
+
+/** 下载到电脑（主进程默认放 ~/Downloads，同名自动加序号），下完在 Finder 里指给你看 */
+async function downloadPhoneFile(item: { name: string; path: string }) {
+  fileBusy.value = item.path;
+  try {
+    const res = await api.adbPull(item.path, '', currentSerial.value);
+    if (res.ok) {
+      pushLog(`$ adb pull ${item.path}\n  → ${res.localPath}`, 'ok');
+      message.success(i18n.t(`已下载到 ${res.localPath}`));
+      await api.revealPath(res.localPath);
+    } else {
+      message.error(res.message);
+    }
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    fileBusy.value = '';
+  }
+}
+
+/** 删除是破坏性的，二次确认 */
+function confirmDeleteFile(item: { name: string; path: string }) {
+  Modal.confirm({
+    title: `${i18n.t('删除')} ${item.name} ？`,
+    content: i18n.t('手机上这个文件会被真删掉，不能恢复'),
+    okText: i18n.t('删除'),
+    okType: 'danger',
+    cancelText: i18n.t('取消'),
+    async onOk() {
+      fileBusy.value = item.path;
+      try {
+        const res = await api.adbShell(
+          `rm -rf ${shq(item.path)}`,
+          currentSerial.value,
+        );
+        pushLog(
+          res.raw ? `$ rm -rf ${item.path}\n${res.raw}` : res.message,
+          res.ok ? 'ok' : 'err',
+        );
+        if (!res.ok) {
+          message.error(res.message);
+          return;
+        }
+        message.success(i18n.t(`已删除 ${item.name}`));
+        await loadPhoneFiles();
+      } finally {
+        fileBusy.value = '';
+      }
+    },
+  });
+}
+
+function startRename(item: { name: string; path: string }) {
+  fileRenameFrom.value = item;
+  fileRenameValue.value = item.name;
+  fileRenameOpen.value = true;
+}
+
+async function doRename() {
+  const from = fileRenameFrom.value;
+  const name = fileRenameValue.value.trim();
+  if (!from || !name || name === from.name) {
+    fileRenameOpen.value = false;
+    return;
+  }
+  fileBusy.value = from.path;
+  try {
+    const res = await api.adbShell(
+      `mv ${shq(from.path)} ${shq(fileDir.value + name)}`,
+      currentSerial.value,
+    );
+    pushLog(
+      res.raw ? `$ mv ${from.name} ${name}\n${res.raw}` : res.message,
+      res.ok ? 'ok' : 'err',
+    );
+    if (!res.ok) {
+      message.error(res.message);
+      return;
+    }
+    message.success(i18n.t(`已改名为 ${name}`));
+    fileRenameOpen.value = false;
+    await loadPhoneFiles();
+  } finally {
+    fileBusy.value = '';
+  }
+}
+
 async function onDrop(e: DragEvent) {
   e.preventDefault();
   dragging.value = false;
@@ -1161,6 +1321,20 @@ const pushDest = ref(
   localStorage.getItem(PUSH_DEST_KEY) || '/sdcard/Download/',
 );
 const pushDestOpen = ref(false);
+/* ---------------- 手机文件（电脑上直接看 / 操作手机目录） ---------------- */
+const filesOpen = ref(false);
+const fileLoading = ref(false);
+const fileBusy = ref('');
+const fileList = ref<
+  { name: string; isDir: boolean; size: number; time: string; path: string }[]
+>([]);
+const fileRenameOpen = ref(false);
+const fileRenameValue = ref('');
+const fileRenameFrom = ref<{ name: string; path: string } | null>(null);
+const fileDir = computed(() =>
+  pushDest.value.endsWith('/') ? pushDest.value : `${pushDest.value}/`,
+);
+let fileTimer: ReturnType<typeof setInterval> | null = null;
 // 无线调试：IP 设置的弹层
 const WIFI_IP_KEY = 'Log Record$$wifiIp';
 const wifiIpOpen = ref(false);
@@ -1540,6 +1714,7 @@ onUnmounted(() => {
   window.removeEventListener('dragover', blockWindowDrop);
   window.removeEventListener('drop', blockWindowDrop);
   offOutput?.();
+  if (fileTimer) clearInterval(fileTimer);
 });
 
 /* ---------------- 展示用 ---------------- */
@@ -2151,6 +2326,25 @@ function deviceSubtitle(d: AdbDevice) {
               @click.stop
               @mousedown.stop
             >
+              <a-tooltip :title="$t('在这个目录里下载 / 改名 / 删除文件')">
+                <div
+                  class="tile-side-entry"
+                  :class="{ 'tile-side-entry-off': !ready }"
+                  @click="openFiles"
+                >
+                  <FolderFilled class="tile-side-entry-icon" />
+                  <div class="tile-side-entry-label">
+                    {{ $t('管理文件') }}
+                  </div>
+                </div>
+              </a-tooltip>
+            </span>
+            <div class="tile-side-divider"></div>
+            <span
+              class="tile-guard"
+              @click.stop
+              @mousedown.stop
+            >
               <a-tooltip :title="$t('在手机上打开这个文件夹')">
                 <div
                   class="tile-side-entry"
@@ -2461,6 +2655,123 @@ function deviceSubtitle(d: AdbDevice) {
       </a-modal>
 
       <!-- 无线调试：手机 IP -->
+      <!-- 手机文件：电脑上直接看和操作手机目录 -->
+      <a-modal
+        v-model:open="filesOpen"
+        :title="$t('手机文件')"
+        :footer="null"
+        width="660px"
+        @cancel="closeFiles"
+      >
+        <div class="file-bar">
+          <div class="file-path">{{ fileDir }}</div>
+          <a-tooltip :title="$t('重新读一次')">
+            <a-button
+              size="small"
+              :loading="fileLoading"
+              @click="loadPhoneFiles"
+            >
+              <ReloadOutlined />
+            </a-button>
+          </a-tooltip>
+          <a-button
+            size="small"
+            type="primary"
+            :disabled="!ready"
+            @click="pickAndPush"
+          >
+            <UploadOutlined />
+            {{ $t('上传') }}
+          </a-button>
+        </div>
+        <div class="un-list file-list">
+          <div
+            v-if="!fileList.length"
+            class="un-empty"
+          >
+            {{
+              fileLoading
+                ? $t('读取中…')
+                : $t('这个目录是空的（把文件拖到磁贴上就会传到这里）')
+            }}
+          </div>
+          <div
+            v-for="f in fileList"
+            :key="f.path"
+            class="un-item"
+          >
+            <FolderFilled
+              v-if="f.isDir"
+              class="file-icon"
+            />
+            <FileOutlined
+              v-else
+              class="file-icon"
+            />
+            <div class="un-info">
+              <div
+                class="un-name"
+                :title="f.name"
+              >
+                {{ f.name }}
+              </div>
+              <div class="un-pkg">
+                {{ f.isDir ? $t('文件夹') : fmtSize(f.size) }} · {{ f.time }}
+              </div>
+            </div>
+            <a-tooltip :title="$t('下载到电脑')">
+              <a-button
+                size="small"
+                type="link"
+                :loading="fileBusy === f.path"
+                @click="downloadPhoneFile(f)"
+              >
+                <DownloadOutlined />
+              </a-button>
+            </a-tooltip>
+            <a-tooltip :title="$t('重命名')">
+              <a-button
+                size="small"
+                type="link"
+                @click="startRename(f)"
+              >
+                <EditOutlined />
+              </a-button>
+            </a-tooltip>
+            <a-tooltip :title="$t('删除')">
+              <a-button
+                size="small"
+                type="link"
+                danger
+                @click="confirmDeleteFile(f)"
+              >
+                <DeleteOutlined />
+              </a-button>
+            </a-tooltip>
+          </div>
+        </div>
+        <div class="file-foot">
+          <span>{{ fileList.length }} {{ $t('项') }}</span>
+          <span class="file-dim">
+            {{ $t('手机上往这里放文件，4 秒内会自动刷新') }}
+          </span>
+        </div>
+      </a-modal>
+
+      <!-- 重命名手机上的文件 -->
+      <a-modal
+        v-model:open="fileRenameOpen"
+        :title="$t('重命名')"
+        width="360px"
+        @ok="doRename"
+      >
+        <a-input
+          v-model:value="fileRenameValue"
+          size="small"
+          @press-enter="doRename"
+        />
+      </a-modal>
+
       <a-modal
         v-model:open="wifiIpOpen"
         :title="$t('无线调试设置')"
@@ -3378,6 +3689,50 @@ function deviceSubtitle(d: AdbDevice) {
 }
 
 /* ---- 卸载弹层 ---- */
+/* 手机文件弹层 */
+.file-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #f7f7f7;
+  color: #666;
+  font-size: 12px;
+  font-family: Menlo, Consolas, monospace;
+}
+
+.file-list {
+  max-height: 420px;
+}
+
+.file-icon {
+  flex-shrink: 0;
+  color: #bbb;
+}
+
+.file-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  color: #999;
+  font-size: 12px;
+}
+
+.file-dim {
+  margin-left: auto;
+}
+
 .un-toolbar {
   display: flex;
   align-items: center;

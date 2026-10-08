@@ -482,6 +482,41 @@ const createWindow = () => {
   );
 
   ipcMain.handle(
+    'adb:pull',
+
+    async (
+      _,
+
+      payload: { remotePath: string; destDir: string; serial?: string },
+    ) => {
+      const info = currentAdb();
+
+      if (!info.found)
+        return { ok: false, message: info.error || '没找到 adb' };
+
+      return pullFromPhone(info.file, payload.remotePath, payload.destDir, {
+        serial: payload.serial,
+      });
+    },
+  );
+
+  // 在电脑的文件管理器里把这个文件/目录显示出来
+
+  ipcMain.handle('app:revealPath', (_, target: string) => {
+    try {
+      shell.showItemInFolder(target);
+
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
+
+  ipcMain.handle(
     'adb:uninstall',
     async (
       _,

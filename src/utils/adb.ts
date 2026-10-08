@@ -1586,6 +1586,44 @@ export function judgeInstall(raw: string): { ok: boolean; message: string } {
 }
 
 /** 截图，返回 PNG 的 Buffer */
+/**
+ * 把手机上的文件/目录下载到电脑。
+ * 同名时自动改名（xxx-1.apk、xxx-2.apk…），不覆盖电脑上已有的东西。
+ */
+export async function pullFromPhone(
+  file: string,
+  remotePath: string,
+  destDir: string,
+  options: { serial?: string } = {},
+): Promise<{ ok: boolean; message: string; localPath: string }> {
+  const name = remotePath.replace(/\/+$/, '').split('/').pop() || 'file';
+  const safe = name.replace(/[/\\:*?"<>|]/g, '_');
+  const ext = path.extname(safe);
+  const stem = ext ? safe.slice(0, -ext.length) : safe;
+  let localPath = path.join(destDir, safe);
+  for (let i = 1; i < 500 && fs.existsSync(localPath); i++) {
+    localPath = path.join(destDir, `${stem}-${i}${ext}`);
+  }
+  try {
+    fs.mkdirSync(destDir, { recursive: true });
+  } catch {
+    /* 已经有了就够了 */
+  }
+  const base = options.serial ? ['-s', options.serial] : [];
+  const res = await runAdbBuffer(
+    file,
+    [...base, 'pull', remotePath, localPath],
+    { timeout: 30 * 60 * 1000 },
+  );
+  const text = res.buffer.toString().trim();
+  const ok = res.code === 0 && !/error|failed|cannot/i.test(text);
+  return {
+    ok,
+    message: ok ? localPath : text || res.stderr || '下载失败',
+    localPath: ok ? localPath : '',
+  };
+}
+
 export async function screencap(
   file: string,
   serial?: string,
