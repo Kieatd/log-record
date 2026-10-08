@@ -37,6 +37,7 @@ import {
   UploadOutlined,
   UsbOutlined,
   WifiOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons-vue';
 import ScrcpyView from './scrcpy-view.vue';
 
@@ -140,6 +141,80 @@ const wifiIp = ref(localStorage.getItem('Log Record$$wifiIp') || '');
 const busyWifi = ref(false);
 
 const customCmd = ref('');
+
+/* ---------------- 打开应用 ---------------- */
+/** 记住上次打开的包名，下次磁贴左边那个按钮就是一键打开 */
+const OPEN_APP_KEY = 'Log Record$$openApp';
+const openAppOpen = ref(false);
+const openAppList = ref<string[]>([]);
+const openAppKeyword = ref('');
+const openAppBusy = ref(false);
+const openAppLoading = ref(false);
+const lastApp = ref(localStorage.getItem(OPEN_APP_KEY) || '');
+
+const filteredApps = computed(() =>
+  openAppKeyword.value.trim()
+    ? openAppList.value.filter((x) =>
+        x.toLowerCase().includes(openAppKeyword.value.trim().toLowerCase()),
+      )
+    : openAppList.value,
+);
+
+/** 手机上的三方应用（只需要包名，标签还得额外查 dumpsys，先不折腾） */
+async function loadOpenAppList() {
+  if (!currentSerial.value) return;
+  openAppLoading.value = true;
+  try {
+    const res = await api.adbShell('pm list packages -3', currentSerial.value);
+    const text = String(res.message || '');
+    openAppList.value = text
+      .split('\n')
+      .map((l) => l.trim().replace(/^package:/, ''))
+      .filter((x) => x.includes('.') && !x.includes(' '))
+      .sort();
+    if (!openAppList.value.length) {
+      pushLog(res.message || '没读到应用列表', 'err');
+    }
+  } catch (err) {
+    pushLog(err instanceof Error ? err.message : String(err), 'err');
+  } finally {
+    openAppLoading.value = false;
+  }
+}
+
+/**
+ * 打开手机上某个应用。
+ * 用 monkey 的 LAUNCHER 惯用法，比 am start 省事：不用先去找 activity 名。
+ */
+async function launchApp(pkg: string) {
+  if (!currentSerial.value || !pkg) return;
+  openAppBusy.value = true;
+  try {
+    const cmd = `monkey -p ${pkg} -c android.intent.category.LAUNCHER 1`;
+    const res = await api.adbShell(cmd, currentSerial.value);
+    pushLog(
+      res.raw ? `$ ${cmd}\n${res.raw}` : res.message,
+      res.ok ? 'ok' : 'err',
+    );
+    if (res.ok) {
+      lastApp.value = pkg;
+      localStorage.setItem(OPEN_APP_KEY, pkg);
+      openAppOpen.value = false;
+      message.success(i18n.t(`已打开 ${pkg}`));
+    } else {
+      message.error(res.message);
+    }
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    openAppBusy.value = false;
+  }
+}
+
+function openAppPicker() {
+  openAppOpen.value = true;
+  if (!openAppList.value.length) void loadOpenAppList();
+}
 const busyCustom = ref(false);
 
 interface InstallProgressState {
@@ -1878,6 +1953,37 @@ function deviceSubtitle(d: AdbDevice) {
           </div>
         </div>
 
+        <!-- 打开应用：左边一键打开上次选的应用，右边选应用 -->
+        <div
+          class="tile"
+          :class="{ 'tile-disabled': !ready }"
+        >
+          <div class="tile-main tile-main-flat">
+            <div class="tile-icon"><AppstoreOutlined /></div>
+            <div class="tile-title">{{ $t('打开应用') }}</div>
+            <div class="tile-desc">{{ lastApp || $t('还没选过应用') }}</div>
+          </div>
+          <div class="tile-side">
+            <a-button
+              size="small"
+              type="primary"
+              :disabled="!ready || !lastApp"
+              :loading="openAppBusy"
+              @click.stop="lastApp && launchApp(lastApp)"
+            >
+              <PlayCircleOutlined />
+              {{ $t('打开') }}
+            </a-button>
+            <a-button
+              size="small"
+              :disabled="!ready"
+              @click.stop="openAppPicker"
+            >
+              {{ $t('选择应用') }}
+            </a-button>
+          </div>
+        </div>
+
         <!-- 截图：左边截屏，右边是最近一张缩略图（点开看全部） -->
         <div
           class="tile"
@@ -2465,6 +2571,40 @@ function deviceSubtitle(d: AdbDevice) {
       </a-modal>
 
       <!-- 无线调试：手机 IP -->
+      <!-- 打开应用：选一个 -->
+      <a-modal
+        v-model:open="openAppOpen"
+        :title="$t('打开应用')"
+        :footer="null"
+        width="420px"
+      >
+        <a-input
+          v-model:value="openAppKeyword"
+          size="small"
+          :placeholder="$t('搜索包名')"
+          allow-clear
+        />
+        <a-spin :spinning="openAppLoading">
+          <div class="app-list">
+            <div
+              v-for="pkg in filteredApps"
+              :key="pkg"
+              class="app-row"
+              :class="{ 'app-row-active': pkg === lastApp }"
+              @click="launchApp(pkg)"
+            >
+              {{ pkg }}
+            </div>
+            <div
+              v-if="!filteredApps.length && !openAppLoading"
+              class="app-row app-row-empty"
+            >
+              {{ $t('没读到应用（手机连上了吗）') }}
+            </div>
+          </div>
+        </a-spin>
+      </a-modal>
+
       <a-modal
         v-model:open="wifiIpOpen"
         :title="$t('无线调试设置')"
@@ -2832,6 +2972,34 @@ function deviceSubtitle(d: AdbDevice) {
   font-size: 20px;
   color: #336666;
 }
+.app-list {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 10px;
+}
+
+.app-row {
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.app-row:hover {
+  background: #f2f6f6;
+}
+
+.app-row-active {
+  color: #336666;
+  font-weight: 600;
+}
+
+.app-row-empty {
+  color: #bbb;
+  cursor: default;
+}
+
 .device-right {
   display: flex;
   flex-direction: column;
