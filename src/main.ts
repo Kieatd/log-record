@@ -38,9 +38,6 @@ import { scanUsbPhones } from './utils/usb-scan';
 import {
   pullFromPhone,
   cancelInstall,
-  connectWifi,
-  disconnectWifi,
-  enableTcpip,
   findAapt,
   installApk,
   getStayAwake,
@@ -800,33 +797,6 @@ const createWindow = () => {
       return { canceled: false, filePath: result.filePath };
     },
   );
-
-  ipcMain.handle(
-    'adb:tcpip',
-    async (_, payload: { serial?: string; port?: number }) => {
-      const info = currentAdb();
-      if (!info.found)
-        return { ok: false, message: info.error || '没找到 adb' };
-      return enableTcpip(info.file, payload.serial, payload.port ?? 5555);
-    },
-  );
-
-  ipcMain.handle(
-    'adb:connect',
-    async (_, payload: { address: string; port?: number }) => {
-      const info = currentAdb();
-      if (!info.found)
-        return { ok: false, message: info.error || '没找到 adb' };
-      return connectWifi(info.file, payload.address, payload.port ?? 5555);
-    },
-  );
-
-  // 断开无线设备（用户在设备列表里看到的那台 ip:5555）
-  ipcMain.handle('adb:disconnect', async (_, payload: { address: string }) => {
-    const info = currentAdb();
-    if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
-    return disconnectWifi(info.file, payload.address);
-  });
 
   // 通用 shell（输出面板的「自定义命令」用）
   ipcMain.handle(

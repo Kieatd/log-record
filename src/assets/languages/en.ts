@@ -171,6 +171,8 @@ export default {
   '没拿到文件路径，请用「点击选择」': 'Could not read the file path — use "click to pick" instead',
   '没有检测到设备，检查数据线和手机上的「允许 USB 调试」': 'No device detected — check the cable and "Allow USB debugging" on the phone',
   '没检测到设备。插上数据线，手机弹「允许 USB 调试」时点允许': 'No device detected. Plug in the cable and tap "Allow USB debugging" on the phone.',
+  '没有可用的设备：插上数据线，选中一台设备': 'No usable device — plug in the cable and pick one',
+  '设备还没就绪，过会儿再点「开始投屏」': 'The device is not ready yet — try “Start mirroring” again in a moment',
   '检测到手机插着（{name}），但它没把「ADB 调试」交给电脑':
     'A phone is plugged in ({name}) but is not exposing ADB to the Mac',
   '手机上：设置 → 系统 → 开发者选项 → 打开「USB 调试」':
@@ -255,16 +257,6 @@ export default {
 
   '投屏没在跑（可能被重启过），请点「开始投屏」重新连': 'Mirroring is not running (the app may have restarted). Click "Start mirroring" again',
   '投屏会在手机上启动一个服务，需要时再开': 'Mirroring starts a service on the phone — start it only when needed',
-  '数据线断了，正在切到无线…': 'Cable unplugged — switching to Wi-Fi…',
-  '无线没接上：{why}。有些手机（比如这台）拔线后会把无线调试关掉 —— 插回数据线，点「开启」再点「连接」':
-    'Wi-Fi did not connect: {why}. Some phones (like this one) turn wireless debugging off when unplugged — plug the cable back in, tap “Enable”, then “Connect”',
-  '设备没就绪：{why}；点投屏面板上的「重试」再试':
-    'Device not ready: {why} — try “Retry” in the mirror panel',
-  '设备没就绪：{why}': 'Device not ready: {why}',
-  'USB 设备没出现在 adb 列表里': 'The USB device is not in the adb list',
-  '连上了，但设备一直是 offline': 'Connected, but the device stays offline',
-  '没有可用的设备：先插线，或点「连接」连上无线':
-    'No usable device — plug in the cable, or connect over Wi-Fi first',
   投屏已接上: 'Mirroring connected',
   '投屏没接上，点投屏面板上的「重试」试试':
     'Mirroring did not connect — try “Retry” in the mirror panel',
@@ -286,10 +278,6 @@ export default {
   '已设 IP': 'IP set',
   '设置 IP': 'Set IP',
   '要连的手机 IP，例如 192.168.1.5': 'Phone IP to connect, e.g. 192.168.1.5',
-  '无线调试设置': 'Wireless debug settings',
-  '手机 IP': 'Phone IP',
-  '例如 192.168.1.5': 'e.g. 192.168.1.5',
-  '插着线点「开启」时，如果手机上显示 IP 会自动填进来': 'When you tap Enable while plugged in, the IP shown on the phone is filled in automatically',
   '打开手机目录': 'Open on phone',
   '改目录': 'Folder',
   '把文件拖到这里，或点击选择': 'Drop files here, or click to pick',
@@ -324,7 +312,6 @@ export default {
     'This folder is empty (drag files here, or use Upload at the top right)',
   '先选一个要测的应用': 'Pick an app to test first',
   '点这里开始跑': 'Click to run',
-  '插线开启一次，之后可拔线': 'Enable once while plugged in, then unplug',
   '只在应用内操作（不发 BACK/HOME）': 'Stay inside the app (no BACK/HOME)',
   'monkey 默认有相当比例的事件是 BACK/HOME/切换应用，跑一会儿就会回到桌面；勾上就只发点按滑动这类应用内操作': 'By default a large share of monkey events are BACK / HOME / app-switch, so it will drop you back to the launcher. Tick this to only send in-app events like taps and swipes',
   '不勾「只在应用内操作」的话，它还会按 BACK/HOME 和切换应用，那是 monkey 的默认行为': 'Without this, monkey also presses BACK/HOME and switches apps — that is monkey default behaviour',

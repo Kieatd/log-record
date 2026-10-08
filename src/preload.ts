@@ -194,12 +194,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('adb:setStayAwake', { on, serial }),
   adbSaveImage: (dataUrl: string, defaultName: string) =>
     ipcRenderer.invoke('adb:saveImage', { dataUrl, defaultName }),
-  adbTcpip: (serial?: string, port?: number) =>
-    ipcRenderer.invoke('adb:tcpip', { serial, port }),
-  adbConnect: (address: string, port?: number) =>
-    ipcRenderer.invoke('adb:connect', { address, port }),
-  adbDisconnect: (address: string) =>
-    ipcRenderer.invoke('adb:disconnect', { address }),
   adbLocalSwipe: (payload: {
     x1: number;
     y1: number;

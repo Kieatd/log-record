@@ -1795,66 +1795,6 @@ export async function setStayAwake(
 }
 
 /** 打开无线调试：让手机在 5555 端口监听，之后就能拔线了 */
-export async function enableTcpip(
-  file: string,
-  serial?: string,
-  port = 5555,
-): Promise<{ ok: boolean; message: string; raw: string }> {
-  const args = ['tcpip', String(port)];
-  if (serial) args.unshift('-s', serial);
-  const res = await runAdb(file, args, { timeout: 20000 });
-  const raw = (res.stdout + res.stderr).trim();
-  /**
-   * 判断成功只看退出码，不看输出里那句话。
-   *
-   * 实测：这台 HONOR（Android 7）执行 `adb tcpip 5555` 后**什么都不打印**
-   * （stdout/stderr 都空），但退出码 0、手机确实切到了 TCP 模式（紧接着 connect 就成功）。
-   * 原来要求输出里必须出现「restarting in TCP mode」，于是明明成功也报「开启失败」。
-   * 反过来说，真失败（比如设备没插着）adb 会以非 0 退出并在 stderr 写明原因，所以看退出码是可靠的。
-   */
-  const ok = res.code === 0;
-  return {
-    ok,
-    message: ok
-      ? `已开启无线调试（端口 ${port}）${raw ? `：${raw}` : ''}`
-      : raw || `开启失败（adb 退出码 ${res.code}）`,
-    raw,
-  };
-}
-
-/** 连接无线设备 */
-export async function connectWifi(
-  file: string,
-  address: string,
-  port = 5555,
-): Promise<{ ok: boolean; message: string; raw: string }> {
-  const target = address.includes(':') ? address : `${address}:${port}`;
-  const res = await runAdb(file, ['connect', target], { timeout: 20000 });
-  const raw = (res.stdout + res.stderr).trim();
-  const ok = /connected to/i.test(raw) && !/failed|refused|unable/i.test(raw);
-  return {
-    ok,
-    message: ok ? `已连接到 ${target}` : raw || `连接 ${target} 失败`,
-    raw,
-  };
-}
-
-/** 断开无线设备（只在 adb 这边断开；手机上的无线调试开关不受影响） */
-export async function disconnectWifi(
-  file: string,
-  address: string,
-): Promise<{ ok: boolean; message: string; raw: string }> {
-  const target = address.includes(':') ? address : `${address}:5555`;
-  const res = await runAdb(file, ['disconnect', target], { timeout: 15000 });
-  const raw = (res.stdout + res.stderr).trim();
-  const ok = res.code === 0 && /disconnected/i.test(raw);
-  return {
-    ok,
-    message: ok ? `已断开 ${target}` : raw || `断开 ${target} 失败`,
-    raw,
-  };
-}
-
 /* ------------------------------------------------------------------ */
 /* 手动指定的路径持久化                                                */
 /* ------------------------------------------------------------------ */

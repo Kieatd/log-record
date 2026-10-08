@@ -201,24 +201,10 @@ async function start(): Promise<boolean> {
   frameCount = 0;
   byteCount = 0;
   try {
-    /**
-     * 无线设备自动降档。
-     *
-     * 实测（这台 HONOR 连 2.4GHz）：链路可用吞吐只有 ~10.6 Mbps，
-     * 而投屏画面一有变化就要 ~6.5 Mbps —— 等于把链路吃满，鼠标/触摸事件只能排队，
-     * 手感就是"好卡好卡"。降到 720p/20fps/2Mbps 后链路留出余量，输入立刻跟手。
-     * （判定方式：无线设备的 serial 形如 192.168.1.5:5555）
-     */
-    const wireless = /:\d+$/.test(props.serial || '');
-    const maxSize = wireless ? 720 : 1024;
-    const maxFps = wireless ? 20 : 30;
-    const videoBitRate = wireless ? 2_000_000 : 4_000_000;
-    if (wireless) {
-      emit(
-        'log',
-        `无线设备：自动用省流模式 ${maxSize}p / ${maxFps}fps / ${videoBitRate / 1_000_000}Mbps（避免投屏把链路吃满）`,
-      );
-    }
+    // USB 通道的投屏参数（无线那条路已砍掉，不再按 serial 降档）
+    const maxSize = 1024;
+    const maxFps = 30;
+    const videoBitRate = 4_000_000;
     const res = await api.scrcpyStart(
       props.serial || undefined,
       maxSize,

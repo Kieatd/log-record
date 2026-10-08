@@ -19,12 +19,10 @@ import {
   CameraOutlined,
   CheckCircleFilled,
   DeleteOutlined,
-  DisconnectOutlined,
   EditOutlined,
   FolderOpenOutlined,
   CloseCircleFilled,
   ExclamationCircleFilled,
-  LinkOutlined,
   LoadingOutlined,
   MobileOutlined,
   PictureOutlined,
@@ -147,9 +145,6 @@ const viewerOpen = ref(false);
 const viewerUrl = ref('');
 const viewerName = ref('');
 
-const wifiIp = ref(localStorage.getItem('Log Record$$wifiIp') || '');
-const busyWifi = ref(false);
-
 const customCmd = ref('');
 const busyCustom = ref(false);
 
@@ -183,7 +178,6 @@ const autoStayOnDone = new Set<string>();
 // 投屏面板常驻在右侧，不提供收起 —— 这就是想要的默认布局
 const mirrorRunning = ref(false);
 /** 自动切换无线时防止重入 */
-let autoSwitching = false;
 
 const mirrorRef = ref<{
   start: () => Promise<boolean>;
@@ -262,24 +256,6 @@ const deviceGroups = computed(() => {
 });
 
 /** 这张卡当前用哪条通道 */
-/**
- * 这台手机的无线调试 IP。
- * 无线那条 adb 记录的 serial 本身就是 `ip:port`，所以不用额外跑 adb。
- * 没显示 = 这台手机还没开无线调试（或刚开、App 还在自动连 —— 3 秒轮询会补上）。
- */
-function deviceIp(g: { wifi?: AdbDevice }): string {
-  return g.wifi ? g.wifi.serial.replace(/:\d+$/, '') : '';
-}
-
-function activeTransport(g: {
-  usb?: AdbDevice;
-  wifi?: AdbDevice;
-}): 'usb' | 'wifi' {
-  if (g.wifi && g.wifi.serial === currentSerial.value) return 'wifi';
-  if (g.usb && g.usb.serial === currentSerial.value) return 'usb';
-  return g.usb ? 'usb' : 'wifi';
-}
-
 /** 卡片副标题：品牌 · Android 版本（通道由切换器表示，不在这里重复） */
 function groupSubtitle(g: {
   label: string;
@@ -293,228 +269,14 @@ function groupSubtitle(g: {
   return parts.join(' · ');
 }
 
-/**
- * 切换这台手机的传输方式。
- * USB → 直接切过去；WiFi 已经连过 → 切过去；
- * WiFi 还没连 → 插着线的话顺手开好（先读 IP 再 tcpip，再 connect），然后切过去。
- */
-/**
- * 换通道后把投屏按新通道的参数重开。
- * USB → 1024/30fps/4Mbps；无线 → 720p/20fps/2Mbps（scrcpy-view 里按 serial 判断）。
- * 先等设备真的变成 device 再开：刚 connect / 刚拔线那一会儿，adb 里的状态可能是 offline，
- * 这时开 scrcpy 会直接报「没有可用的设备（状态必须是 device）」。
- */
-async function reopenMirror(wasRunning: boolean) {
-  if (!wasRunning || mirrorRunning.value) return;
-  // selectDevice 只改了 currentSerial，props 要下一个 tick 才更新，先等一拍
-  await new Promise((r) => setTimeout(r, 300));
-  const serial = currentSerial.value;
-  if (!serial) return;
-  const ready = await ensureDeviceReady(serial);
-  if (!ready.ok) {
-    pushLog(`设备没就绪（${serial}）：${ready.why}`, 'err');
-    message.warning(
-      i18n.t('设备没就绪：{why}；点投屏面板上的「重试」再试', {
-        why: ready.why,
-      }),
-    );
-    return;
-  }
-  await restartMirror('投屏已按新通道的参数重开');
-}
-
-/**
- * 让某台设备真的可用（device 状态）。
- *
- * 为什么需要它：adbd 断过的条目会在 adb 里残留成 offline，而这种条目单靠
- * `adb connect` 不会重置（adb 只会回一句 already connected），必须先 disconnect。
- * 还是连不上就把 adb 的原话（例如 Connection refused）带出去，让用户知道真实原因。
- */
-async function ensureDeviceReady(
-  serial: string,
-): Promise<{ ok: boolean; why: string }> {
-  if (await waitForDeviceReady(serial, 2000)) return { ok: true, why: '' };
-  if (!/:\d+$/.test(serial)) {
-    return { ok: false, why: i18n.t('USB 设备没出现在 adb 列表里') };
-  }
-  const ip = serial.replace(/:\d+$/, '');
-  const port = Number(serial.split(':')[1]) || 5555;
-  await api.adbDisconnect(serial);
-  pushLog(`重新连一次无线 ${ip}:${port}`, 'info');
-  const conn = await api.adbConnect(ip, port);
-  pushLog(
-    `$ adb connect ${ip}:${port}\n${conn.raw || conn.message}`,
-    conn.ok ? 'ok' : 'err',
-  );
-  if (!conn.ok) {
-    if (/refused/i.test(conn.message)) {
-      // 端口拒绝连接 = 手机上的 adbd 不在无线模式了，插回线才能重开
-      pushLog(
-        `${ip}:${port} 拒绝连接：手机上的无线调试已经被关掉了（这台手机拔线后会关）`,
-        'err',
-      );
-    }
-    return { ok: false, why: conn.message };
-  }
-  if (!(await waitForDeviceReady(serial, 5000))) {
-    return { ok: false, why: i18n.t('连上了，但设备一直是 offline') };
-  }
-  return { ok: true, why: '' };
-}
-
-/**
- * 投屏面板上的「开始投屏 / 重试 / 重新连接」都走这里：
- * 先把设备弄到可用，再开投屏；日志只按真实结果写。
- */
-async function retryMirror() {
-  const serial = currentSerial.value;
-  if (!serial) {
-    message.warning(i18n.t('没有可用的设备：先插线，或点「连接」连上无线'));
-    return;
-  }
-  const ready = await ensureDeviceReady(serial);
-  if (!ready.ok) {
-    pushLog(`设备没就绪（${serial}）：${ready.why}`, 'err');
-    message.warning(i18n.t('设备没就绪：{why}', { why: ready.why }));
-    // 不 return：还是让面板试一次，真实报错会显示在面板上
-  }
-  await restartMirror('投屏已接上');
-}
-
-/**
- * 等某台设备真的变成 device 状态。
- *
- * 为什么要等：刚拔线 / 刚 adb connect 那一小会儿，设备在 adb 里的状态可能还是
- * offline 或还没重新报到，这时开投屏会直接失败，而不是晚一秒自己能好。
- * 状态变化才写日志，免得每 400ms 刷一行。
- */
-async function waitForDeviceReady(serial: string, timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
-  let shown = '';
-  for (;;) {
-    const res = await api.adbDevices();
-    const d = (res.devices || []).find((x) => x.serial === serial);
-    const state = d ? d.state : '不在列表里';
-    if (d && d.state === 'device') return true;
-    if (state !== shown) {
-      shown = state;
-      pushLog(`等设备就绪…（${serial} 现在是 ${state}）`, 'info');
-    }
-    if (Date.now() >= deadline) break;
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  pushLog(`等不到设备就绪（${serial} 最后状态：${shown}）`, 'err');
-  return false;
-}
-
-/** 重开投屏，并且只按真实结果写日志（不猜成功） */
-async function restartMirror(okMsg: string) {
-  const ok = await mirrorRef.value?.start();
-  if (ok) {
-    pushLog(okMsg, 'info');
-    return true;
-  }
-  pushLog(`${okMsg}——实际没接上`, 'err');
-  message.warning(i18n.t('投屏没接上，点投屏面板上的「重试」试试'));
-  return false;
-}
-
-async function switchTransport(
-  g: { usb?: AdbDevice; wifi?: AdbDevice },
-  t: 'usb' | 'wifi',
-) {
-  const wasRunning = mirrorRunning.value;
-  if (t === 'usb') {
-    let usb = g.usb;
-    if (!usb) {
-      // 刚跑过 tcpip（adbd 重启）的那两三秒里，USB 记录会从 adb 列表里短暂消失。
-      // 所以这里不直接拒绝：先强制刷一次列表再判定。
-      await loadDevices();
-      const again = deviceGroups.value.find(
-        (x) => x.wifi?.serial === g.wifi?.serial,
-      );
-      usb = again?.usb;
-    }
-    if (!usb) {
-      message.warning(i18n.t('没找到 USB 设备：数据线插好了吗'));
-      return;
-    }
-    if (currentSerial.value !== usb.serial) await selectDevice(usb.serial);
-    await reopenMirror(wasRunning);
-    return;
-  }
-  if (g.wifi) {
-    if (currentSerial.value !== g.wifi.serial)
-      await selectDevice(g.wifi.serial);
-    await reopenMirror(wasRunning);
-    return;
-  }
-  if (!g.usb) {
-    message.warning(i18n.t('要先插数据线才能开启无线调试'));
-    return;
-  }
-  // WiFi 还没连上：插着线的这台，一步开好
-  busyWifi.value = true;
-  try {
-    let phoneIp = '';
-    try {
-      const ipRes = await api.adbShell(
-        'ip -f inet addr show wlan0',
-        g.usb.serial,
-      );
-      const ipText = String(ipRes.message || '');
-      const m =
-        ipText.match(/src\s+(\d+\.\d+\.\d+\.\d+)/) ||
-        ipText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
-      if (m) phoneIp = m[1];
-    } catch {
-      /* 取不到就让用户手动填 */
-    }
-    const res = await api.adbTcpip(g.usb.serial, 5555);
-    pushLog(
-      res.raw ? `$ adb tcpip 5555\n${res.raw}` : res.message,
-      res.ok ? 'ok' : 'err',
-    );
-    if (!res.ok) {
-      message.error(res.message);
-      return;
-    }
-    if (!phoneIp) phoneIp = wifiIp.value.trim();
-    if (!phoneIp) {
-      message.warning(i18n.t('没读到手机 IP，请用 ⚙ 手动填'));
-      return;
-    }
-    wifiIp.value = phoneIp;
-    localStorage.setItem(WIFI_IP_KEY, phoneIp);
-    const conn = await api.adbConnect(phoneIp, 5555);
-    pushLog(
-      `$ adb connect ${phoneIp}:5555\n${conn.raw || conn.message}`,
-      conn.ok ? 'ok' : 'err',
-    );
-    if (!conn.ok) {
-      message.error(conn.message);
-      return;
-    }
-    message.success(conn.message);
-    await loadDevices();
-    const wifi = devices.value.find((d) => d.connection === 'wifi');
-    if (wifi) await selectDevice(wifi.serial);
-  } catch (err) {
-    message.error(err instanceof Error ? err.message : String(err));
-  } finally {
-    busyWifi.value = false;
-  }
-
-  // WiFi 新开的这条路径也走同一个收尾
-  await reopenMirror(wasRunning);
-}
-
 async function loadDevices() {
   loadingDevices.value = true;
-  const prevSerial = currentSerial.value;
   try {
     const res = await api.adbDevices();
-    devices.value = res.devices || [];
+    // 只看 USB：无线调试这套已经砍掉（这台手机拔线就丢，实际不可用）。
+    // adb server 里可能还残留着以前连过的 ip:5555 条目，这里直接忽略，
+    // 免得它混进设备卡片、被当成一台可选设备。
+    devices.value = (res.devices || []).filter((d) => d.connection !== 'wifi');
     if (!res.ok) {
       pushLog(res.message, 'err');
     } else if (!devices.value.length) {
@@ -533,12 +295,6 @@ async function loadDevices() {
   } finally {
     loadingDevices.value = false;
   }
-  // 拔线了？同一台手机的无线还在的话，自动切过去并把投屏接上
-  if (prevSerial && prevSerial !== currentSerial.value) {
-    void handoffToWifi(prevSerial);
-  }
-  // 手机一插上（或列表刷新）就顺手把无线也连上 —— 不用每次手点「连接」
-  void autoConnectWifi();
   // 一台可用设备都没有时，顺手看看 USB 上是不是有「插着但没开 USB 调试」的手机
   void refreshUsbHint();
 }
@@ -594,97 +350,6 @@ async function restartAdb() {
   } finally {
     restartingAdb.value = false;
     await loadDevices();
-  }
-}
-
-/**
- * 拔线自动切无线（只做 USB → WiFi 这个方向）。
- *
- * 触发点很巧：拔线会让 scrcpy 会话立刻结束 → 投屏组件 emit 出 running=false →
- * 我们顺手刷新一次设备列表 → 发现"当前用的那台"没了、列表自动选中了别的（那台就是无线）
- * → 于是把投屏在新设备上重新开一次。
- *
- * 为什么不在"无线断了"时反向自动切回 USB：用户可能刚点了「断开」，那是有意为之。
- */
-async function handoffToWifi(prevSerial: string) {
-  if (autoSwitching) return;
-  const now = currentSerial.value;
-  if (!/:\d+$/.test(now) || /:\d+$/.test(prevSerial)) return;
-  autoSwitching = true;
-  try {
-    // 先别宣布「已切到无线」——等真接上了再说
-    pushLog(`USB 断开，试着切到无线 ${now}…`, 'info');
-    message.info(i18n.t('数据线断了，正在切到无线…'));
-    const ready = await ensureDeviceReady(now);
-    if (!ready.ok) {
-      pushLog(
-        `无线没接上：${ready.why}（这台手机一拔线就把无线调试关掉，插回线才能重开）`,
-        'err',
-      );
-      message.error(
-        i18n.t(
-          '无线没接上：{why}。有些手机（比如这台）拔线后会把无线调试关掉 —— 插回数据线，点「开启」再点「连接」',
-          { why: ready.why },
-        ),
-      );
-      return;
-    }
-    await restartMirror('投屏已接到无线上（自动用省流模式）');
-  } finally {
-    autoSwitching = false;
-  }
-}
-
-/**
- * 自动连无线。
- *
- * 触发时机：设备列表刷新（插线 / 切设备 / 手动刷新）之后。
- * 条件：本地存过无线 IP、列表里还没有无线设备、当前至少有一台"带线的"设备。
- * 连不上时（常见原因：手机 DHCP 换了 IP）会从插着线的那台手机**重新读一次 IP**、
- * 更新本地值再重试一遍。
- */
-let autoWifiBusy = false;
-let autoWifiLastTry = 0;
-async function autoConnectWifi() {
-  const savedIp = wifiIp.value.trim();
-  if (!savedIp || autoWifiBusy) return;
-  if (Date.now() - autoWifiLastTry < 5000) return; // 失败时别刷太快
-  if (devices.value.some((d) => /:\d+$/.test(d.serial))) return; // 已经连着无线
-  const usb = devices.value.find((d) => !/:\d+$/.test(d.serial));
-  if (!usb) return; // 没插线就先不动（无线 IP 也读不到）
-
-  autoWifiBusy = true;
-  autoWifiLastTry = Date.now();
-  try {
-    const res = await api.adbConnect(savedIp, 5555);
-    pushLog(
-      `$ adb connect ${savedIp}:5555\n${res.raw || res.message}`,
-      res.ok ? 'ok' : 'err',
-    );
-    if (res.ok) {
-      await loadDevices();
-      return;
-    }
-    // 连不上：IP 很可能变了（DHCP），从插着线的手机重新读
-    const ipRes = await api.adbShell('ip -f inet addr show wlan0', usb.serial);
-    const ipText = String(ipRes.message || '');
-    const m =
-      ipText.match(/src\s+(\d+\.\d+\.\d+\.\d+)/) ||
-      ipText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
-    if (!m || m[1] === savedIp) return;
-    wifiIp.value = m[1];
-    localStorage.setItem(WIFI_IP_KEY, m[1]);
-    pushLog(`手机 IP 变了：${savedIp} → ${m[1]}，重试连接`, 'info');
-    const again = await api.adbConnect(m[1], 5555);
-    pushLog(
-      `$ adb connect ${m[1]}:5555\n${again.raw || again.message}`,
-      again.ok ? 'ok' : 'err',
-    );
-    if (again.ok) await loadDevices();
-  } catch {
-    /* 自动重连失败不打扰用户，下次刷新再试 */
-  } finally {
-    autoWifiBusy = false;
   }
 }
 
@@ -1564,19 +1229,6 @@ const homeDir = computed(() =>
 /** 当前正在看的目录：点文件夹可以进去，可以返回上级 */
 const fileDir = ref(homeDir.value);
 let fileTimer: ReturnType<typeof setInterval> | null = null;
-// 无线调试：IP 设置的弹层
-const WIFI_IP_KEY = 'Log Record$$wifiIp';
-const wifiIpOpen = ref(false);
-
-/** 设备列表里的无线设备（serial 形如 ip:5555）；没有就是空串 */
-const wirelessDevice = computed(
-  () => devices.value.find((d) => /:\d+$/.test(d.serial))?.serial || '',
-);
-const saveWifiIp = () => {
-  localStorage.setItem(WIFI_IP_KEY, wifiIp.value.trim());
-  wifiIpOpen.value = false;
-  message.success(i18n.t('保存成功'));
-};
 // 自定义命令：执行后是否清空输入
 const CUSTOM_CLEAR_KEY = 'Log Record$$customClearAfter';
 const customClearAfter = ref(localStorage.getItem(CUSTOM_CLEAR_KEY) !== '0');
@@ -1764,38 +1416,6 @@ function shotSize(bytes: number) {
   return bytes > 1024 * 1024
     ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
     : `${Math.round(bytes / 1024)} KB`;
-}
-
-/* ---------------- 无线连接 ---------------- */
-
-/** 断开无线连接；如果当前用的就是它，切回 USB 设备（否则界面会停在已不存在的设备上） */
-async function disconnectWifi() {
-  const target = wirelessDevice.value;
-  if (!target) return;
-  busyWifi.value = true;
-  try {
-    const res = await api.adbDisconnect(target);
-    pushLog(
-      `$ adb disconnect ${target}\n${res.raw || res.message}`,
-      res.ok ? 'ok' : 'err',
-    );
-    if (!res.ok) {
-      message.error(res.message);
-      return;
-    }
-    message.success(res.message);
-    // 如果当前用的就是它，切回 USB 设备（否则界面会停在一台已经不存在的设备上）
-    const wasCurrent = currentSerial.value === target;
-    await loadDevices();
-    if (wasCurrent) {
-      const usb = devices.value.find((d) => !/:\d+$/.test(d.serial));
-      if (usb) await selectDevice(usb.serial);
-    }
-  } catch (err) {
-    message.error(err instanceof Error ? err.message : String(err));
-  } finally {
-    busyWifi.value = false;
-  }
 }
 
 /* ---------------- 自定义命令 ---------------- */
@@ -2127,54 +1747,15 @@ function deviceSubtitle(d: AdbDevice) {
           v-for="g in deviceGroups"
           :key="g.key"
           class="device-card"
-          :class="{
-            'device-card-active':
-              activeTransport(g) &&
-              [g.usb, g.wifi].some((x) => x && x.serial === currentSerial),
-          }"
-          @click="switchTransport(g, activeTransport(g))"
+          :class="{ 'device-card-active': g.best.serial === currentSerial }"
+          @click="selectDevice(g.best.serial)"
         >
           <MobileOutlined class="device-icon" />
           <div class="device-info">
             <div class="device-name">{{ g.label }}</div>
             <div class="device-sub">{{ groupSubtitle(g) }}</div>
-            <a-radio-group
-              class="device-transport"
-              size="small"
-              button-style="solid"
-              :value="activeTransport(g)"
-              @click.stop
-              @change="(e: any) => switchTransport(g, e.target.value)"
-            >
-              <a-radio-button value="usb">USB</a-radio-button>
-              <a-radio-button value="wifi">WiFi</a-radio-button>
-            </a-radio-group>
           </div>
           <div class="device-right">
-            <div
-              v-if="deviceIp(g)"
-              class="device-net"
-              :title="$t('点一下可以手动改 IP')"
-              @click.stop="wifiIpOpen = true"
-            >
-              <LinkOutlined class="device-net-icon" />
-              <span>{{ deviceIp(g) }}</span>
-            </div>
-            <div
-              v-else
-              class="device-net device-net-off"
-              @click.stop="wifiIpOpen = true"
-            >
-              {{ $t('无线未开启') }}
-            </div>
-            <div
-              v-if="g.wifi"
-              class="device-net device-net-action"
-              @click.stop="disconnectWifi()"
-            >
-              <DisconnectOutlined class="device-net-icon" />
-              <span>{{ $t('断开') }}</span>
-            </div>
             <div
               class="device-state"
               :class="'state-' + g.best.state"
@@ -3075,35 +2656,6 @@ function deviceSubtitle(d: AdbDevice) {
         />
       </a-modal>
 
-      <a-modal
-        v-model:open="wifiIpOpen"
-        :title="$t('无线调试设置')"
-        :footer="null"
-        width="420px"
-      >
-        <div class="set-item">
-          <div class="set-label">{{ $t('手机 IP') }}</div>
-          <a-input
-            v-model:value="wifiIp"
-            size="small"
-            :placeholder="$t('例如 192.168.1.5')"
-            @press-enter="saveWifiIp"
-          />
-          <div class="set-tip">
-            {{ $t('插着线点「开启」时，如果手机上显示 IP 会自动填进来') }}
-          </div>
-        </div>
-        <div class="set-foot">
-          <a-button
-            size="small"
-            type="primary"
-            @click="saveWifiIp"
-          >
-            {{ $t('保存') }}
-          </a-button>
-        </div>
-      </a-modal>
-
       <!-- 传文件的接收目录 -->
 
       <!-- 截图记录 -->
@@ -3419,33 +2971,6 @@ function deviceSubtitle(d: AdbDevice) {
   align-items: flex-end;
   gap: 6px;
   flex-shrink: 0;
-}
-
-/* 右上角那个 IP：有 IP 就代表无线调试已经开着、而且 App 已连上 */
-.device-net {
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #336666;
-}
-
-.device-net-action {
-  color: #999;
-  cursor: pointer;
-}
-
-.device-net-action:hover {
-  color: #c0392b;
-}
-
-.device-net {
-  color: #bbb;
-}
-
-.device-transport {
-  margin-top: 6px;
 }
 
 .device-info {
