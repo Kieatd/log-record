@@ -212,6 +212,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbPull: (remotePath: string, destDir: string, serial?: string) =>
     ipcRenderer.invoke('adb:pull', { remotePath, destDir, serial }),
   revealPath: (target: string) => ipcRenderer.invoke('app:revealPath', target),
+  pickDir: (defaultPath?: string) =>
+    ipcRenderer.invoke('app:pickDir', defaultPath),
 
   adbShell: (command: string, serial?: string) =>
     ipcRenderer.invoke('adb:shell', { command, serial }),
