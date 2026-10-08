@@ -2222,21 +2222,17 @@ function deviceSubtitle(d: AdbDevice) {
               {{ $t('包含系统应用') }}
             </a-checkbox>
           </a-tooltip>
-          <span
-            v-if="timeLoading"
-            class="un-hint"
-          >
-            <LoadingOutlined spin />
-            {{ $t('读取安装时间') }}
-          </span>
-          <span
-            v-else-if="labelLoading"
-            class="un-hint"
-          >
-            <LoadingOutlined spin />
-            {{ $t('读取应用名') }} {{ labelProgress.done }}/{{
-              labelProgress.total
-            }}
+          <!-- 这个位置一直占着，免得提示出现/消失时表头跟着抖 -->
+          <span class="un-hint">
+            <template v-if="timeLoading">
+              <LoadingOutlined spin />
+              {{ $t('读取安装时间') }}
+            </template>
+            <template v-else-if="labelLoading">
+              <LoadingOutlined spin />
+              {{ $t('读取应用名') }}
+              {{ labelProgress.done }}/{{ labelProgress.total }}
+            </template>
           </span>
         </div>
 
@@ -3387,6 +3383,28 @@ function deviceSubtitle(d: AdbDevice) {
   align-items: center;
   gap: 10px;
   margin-bottom: 8px;
+}
+
+/* 搜索框占掉剩下的宽度，但不许把右边的「包含系统应用」挤变形 */
+.un-toolbar :deep(.ant-input-affix-wrapper) {
+  flex: 1;
+  min-width: 120px;
+}
+
+.un-toolbar :deep(.ant-checkbox-wrapper) {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 进度提示固定占一块地方、右对齐，出现和消失都不影响别的元素 */
+.un-hint {
+  flex-shrink: 0;
+  min-width: 116px;
+  margin-left: auto;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #999;
 }
 .un-list {
   max-height: 380px;
