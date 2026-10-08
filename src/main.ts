@@ -35,6 +35,7 @@ import {
 } from './utils/node-strings';
 import { loadWindowState, saveWindowState } from './utils/window-state';
 import {
+  pullFromPhone,
   cancelInstall,
   connectWifi,
   disconnectWifi,
@@ -943,6 +944,7 @@ const createWindow = () => {
   });
 
   Menu.setApplicationMenu(null);
+
   if (maximized) {
     mainWindow.maximize();
   }
