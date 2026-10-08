@@ -1897,7 +1897,7 @@ function deviceSubtitle(d: AdbDevice) {
       <div class="tile-grid">
         <!-- 拖 APK 安装 -->
         <div
-          class="tile"
+          class="tile tile-column"
           :class="{
             'tile-drop': dragging,
             'tile-disabled': !ready || installing,
@@ -2239,7 +2239,7 @@ function deviceSubtitle(d: AdbDevice) {
 
         <!-- 传文件到手机 -->
         <div
-          class="tile tile-column"
+          class="tile"
           :class="{
             'tile-drop': pushDragging,
             'tile-disabled': !ready,
