@@ -51,6 +51,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   adbPick: () => ipcRenderer.invoke('adb:pick'),
   adbSetPath: (adbPath: string) => ipcRenderer.invoke('adb:setPath', adbPath),
   adbDevices: () => ipcRenderer.invoke('adb:devices'),
+  adbRestartServer: () => ipcRenderer.invoke('adb:restartServer'),
+  // macOS：看 USB 上有没有「插着但没开 USB 调试」的手机（只读描述符）
+  usbScanPhones: () => ipcRenderer.invoke('usb:scanPhones'),
   adbGetInstallConfirm: (serial?: string) =>
     ipcRenderer.invoke('adb:getInstallConfirm', serial),
   adbSetInstallConfirm: (on: boolean, serial?: string) =>

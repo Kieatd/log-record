@@ -34,6 +34,7 @@ import {
   getIPAddressList,
 } from './utils/node-strings';
 import { loadWindowState, saveWindowState } from './utils/window-state';
+import { scanUsbPhones } from './utils/usb-scan';
 import {
   pullFromPhone,
   cancelInstall,
@@ -208,6 +209,31 @@ const createWindow = () => {
     const devices = await listDevices(info.file);
     return { ok: true, devices };
   });
+
+  /**
+   * 重启本机 adb server。
+   * 场景：adb server 跑久了会卡住 —— 手机插着、描述符也正常，但它就是认不到，
+   * 插拔也没用，只能 kill-server + start-server 重启。
+   */
+  ipcMain.handle('adb:restartServer', async () => {
+    const info = currentAdb();
+    if (!info.found)
+      return { ok: false, message: info.error || '没找到 adb', raw: '' };
+    await runAdb(info.file, ['kill-server'], { timeout: 10000 });
+    const res = await runAdb(info.file, ['start-server'], { timeout: 20000 });
+    const raw = `${res.stdout || ''}${res.stderr || ''}`.trim();
+    return {
+      ok: res.code === 0,
+      message: res.code === 0 ? 'adb 已重启' : raw || 'adb 重启失败',
+      raw,
+    };
+  });
+
+  /**
+   * 只看一眼 Mac 的 USB 总线：有没有「手机插着但没开 USB 调试」。
+   * 只读描述符，不碰设备，不用 adb。
+   */
+  ipcMain.handle('usb:scanPhones', () => scanUsbPhones());
 
   ipcMain.handle(
     'adb:install',

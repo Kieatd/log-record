@@ -79,6 +79,12 @@ const adb = ref<AdbInfo | null>(null);
 const devices = ref<AdbDevice[]>([]);
 const currentSerial = ref('');
 const loadingDevices = ref(false);
+/**
+ * USB 上「插着但没把 ADB 接口交出来」的手机（只在 macOS 上查得到）。
+ * 一台可用设备都没有时才去查 —— 这正是「adb 看不见手机」的典型症状。
+ */
+const usbPhones = ref<{ node: string; name: string; hasAdb: boolean }[]>([]);
+const restartingAdb = ref(false);
 const installing = ref(false);
 const dragging = ref(false);
 
@@ -533,6 +539,53 @@ async function loadDevices() {
   }
   // 手机一插上（或列表刷新）就顺手把无线也连上 —— 不用每次手点「连接」
   void autoConnectWifi();
+  // 一台可用设备都没有时，顺手看看 USB 上是不是有「插着但没开 USB 调试」的手机
+  void refreshUsbHint();
+}
+
+/** 没可用设备时，读一眼 USB 描述符：手机插着但没开 USB 调试的话，在这里就能看出来 */
+async function refreshUsbHint() {
+  if (!api.usbScanPhones) return;
+  if (devices.value.some((d) => d.state === 'device')) {
+    usbPhones.value = [];
+    return;
+  }
+  try {
+    const res = await api.usbScanPhones();
+    usbPhones.value = res?.supported ? res.phones || [] : [];
+  } catch {
+    usbPhones.value = [];
+  }
+}
+
+/** 插着但没开 USB 调试的那台（有就提示怎么救） */
+const usbStuckPhone = computed(
+  () => usbPhones.value.find((p) => !p.hasAdb) || null,
+);
+
+/** 重新扫描 + 检测 USB（给提示条上的「重新检查」用） */
+async function recheckDevices() {
+  await loadDevices();
+}
+
+/** 重启本机 adb server：adb 卡住（插拔也认不到设备）时这么救 */
+async function restartAdb() {
+  if (!api.adbRestartServer) return;
+  restartingAdb.value = true;
+  try {
+    const res = await api.adbRestartServer();
+    pushLog(
+      `$ adb kill-server && adb start-server\n${res.raw || res.message}`,
+      res.ok ? 'ok' : 'err',
+    );
+    if (res.ok) message.success(i18n.t('adb 已重启，正在重新扫描'));
+    else message.error(res.message);
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    restartingAdb.value = false;
+    await loadDevices();
+  }
 }
 
 /**
@@ -2039,6 +2092,19 @@ function deviceSubtitle(d: AdbDevice) {
             @click="loadDevices"
           />
         </a-tooltip>
+        <a-tooltip
+          :title="$t('认不到设备时点这里：重启本机 adb（跑久了有时会卡住）')"
+        >
+          <a-button
+            class="section-action-btn"
+            size="small"
+            type="text"
+            :loading="restartingAdb"
+            @click="restartAdb"
+          >
+            {{ $t('重启 adb') }}
+          </a-button>
+        </a-tooltip>
       </div>
 
       <div
@@ -2115,6 +2181,41 @@ function deviceSubtitle(d: AdbDevice) {
         <span>
           {{ $t('没检测到设备。插上数据线，手机弹「允许 USB 调试」时点允许') }}
         </span>
+      </div>
+
+      <!-- 手机插着、但没把 ADB 接口交给电脑：这是「adb 看不见手机」的头号原因 -->
+      <div
+        v-if="usbStuckPhone"
+        class="usb-hint"
+      >
+        <ExclamationCircleFilled class="usb-hint-icon" />
+        <div class="usb-hint-body">
+          <div class="usb-hint-title">
+            {{
+              $t('检测到手机插着（{name}），但它没把「ADB 调试」交给电脑', {
+                name: usbStuckPhone.name,
+              })
+            }}
+          </div>
+          <div class="usb-hint-line">
+            {{ $t('手机上：设置 → 系统 → 开发者选项 → 打开「USB 调试」') }}
+          </div>
+          <div class="usb-hint-line">
+            {{
+              $t(
+                '还不行就关掉「允许 HiSuite 通过 HDB 连接设备」，再拔插一次数据线',
+              )
+            }}
+          </div>
+        </div>
+        <a-button
+          size="small"
+          type="primary"
+          :loading="loadingDevices"
+          @click="recheckDevices"
+        >
+          {{ $t('重新检查') }}
+        </a-button>
       </div>
 
       <!-- ③ 功能磁贴 -->
@@ -3365,6 +3466,46 @@ function deviceSubtitle(d: AdbDevice) {
 .state-offline {
   color: #999;
 }
+/* 手机插着但没开 USB 调试：给一条能直接照做的提示 */
+.usb-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #ffe58f;
+  border-radius: 6px;
+  background: #fffbe6;
+}
+
+.usb-hint-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #d48806;
+}
+
+.usb-hint-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.usb-hint-title {
+  font-size: 13px;
+  color: #874d00;
+}
+
+.usb-hint-line {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #ad6800;
+}
+
+.section-action-btn {
+  padding: 0 4px;
+  height: auto;
+  font-size: 12px;
+}
+
 .device-empty {
   display: flex;
   align-items: center;

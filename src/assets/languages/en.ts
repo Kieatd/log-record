@@ -171,6 +171,17 @@ export default {
   '没拿到文件路径，请用「点击选择」': 'Could not read the file path — use "click to pick" instead',
   '没有检测到设备，检查数据线和手机上的「允许 USB 调试」': 'No device detected — check the cable and "Allow USB debugging" on the phone',
   '没检测到设备。插上数据线，手机弹「允许 USB 调试」时点允许': 'No device detected. Plug in the cable and tap "Allow USB debugging" on the phone.',
+  '检测到手机插着（{name}），但它没把「ADB 调试」交给电脑':
+    'A phone is plugged in ({name}) but is not exposing ADB to the Mac',
+  '手机上：设置 → 系统 → 开发者选项 → 打开「USB 调试」':
+    'On the phone: Settings → System → Developer options → turn on “USB debugging”',
+  '还不行就关掉「允许 HiSuite 通过 HDB 连接设备」，再拔插一次数据线':
+    'If that is not enough, turn off “Allow HiSuite to connect via HDB”, then unplug and replug the cable',
+  重新检查: 'Check again',
+  '重启 adb': 'Restart adb',
+  '认不到设备时点这里：重启本机 adb（跑久了有时会卡住）':
+    'Click here when no device is found: restart the local adb server',
+  'adb 已重启，正在重新扫描': 'adb restarted, rescanning',
   '没装过？': 'Not installed?',
   '清空': 'Clear',
   '清空输出': 'Clear output',
