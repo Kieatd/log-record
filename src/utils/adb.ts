@@ -7,6 +7,7 @@
  */
 import { execFileSync, spawn } from 'child_process';
 import { buildStoredZip } from './zip';
+import zlib from 'zlib';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -739,6 +740,143 @@ function looksLikeEntry(entry: string, buf: Buffer): boolean {
   return true;
 }
 
+/**
+ * 用 dd 从 APK 里取 [offset, offset+length) 这一段。
+ * dd 的 bs/skip 只能按块对齐，所以多取一点、本地再把多出来的头切掉。
+ */
+async function fetchApkRange(
+  file: string,
+  apkPath: string,
+  offset: number,
+  length: number,
+  serial?: string,
+): Promise<Buffer | null> {
+  const BS = 1024;
+  const start = Math.floor(offset / BS) * BS;
+  const head = offset - start;
+  const skip = start / BS;
+  const count = Math.ceil((length + head) / BS) + 1;
+  const base = serial ? ['-s', serial] : [];
+  const res = await runAdbBuffer(
+    file,
+    [
+      ...base,
+      'exec-out',
+      'dd',
+      `if=${apkPath}`,
+      `bs=${BS}`,
+      `skip=${skip}`,
+      `count=${count}`,
+    ],
+    { timeout: 120000 },
+  );
+  if (res.code !== 0 || res.buffer.length <= head) return null;
+  return res.buffer.subarray(head);
+}
+
+/** 在 zip 的中央目录里找一条记录 */
+function findCentralDirEntry(
+  cd: Buffer,
+  entry: string,
+): { offset: number; compSize: number } | null {
+  let pos = 0;
+  while (pos + 46 <= cd.length && cd.readUInt32LE(pos) === 0x02014b50) {
+    const compSize = cd.readUInt32LE(pos + 20);
+    const nameLen = cd.readUInt16LE(pos + 28);
+    const extraLen = cd.readUInt16LE(pos + 30);
+    const commentLen = cd.readUInt16LE(pos + 32);
+    const offset = cd.readUInt32LE(pos + 42);
+    const name = cd.toString('utf8', pos + 46, pos + 46 + nameLen);
+    if (name === entry) return { offset, compSize };
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return null;
+}
+
+/**
+ * 不依赖手机上的 unzip 也能把 APK 里某一条取出来：
+ * ① 取末尾一小段，找到 zip 的目录表结束标记（EOCD）；
+ * ② 取中央目录，查出这一条在文件里的确切偏移和大小；
+ * ③ 只取那一条的本地头和它的数据，本地解压。
+ *
+ * 为什么值得这么绕：APK 可能几百 MB（夸克 182MB），但 manifest 才几十 KB、
+ * 资源表几 MB，而且资源表往往在文件很靠后的位置 —— 直接拉整个 APK 又慢又容易超时。
+ */
+async function extractApkEntryByRange(
+  file: string,
+  apkPath: string,
+  entry: string,
+  serial?: string,
+): Promise<Buffer | null> {
+  const base = serial ? ['-s', serial] : [];
+  // ① 文件大小
+  const sizeRes = await runAdbBuffer(
+    file,
+    [...base, 'shell', `stat -c %s ${apkPath}`],
+    { timeout: 20000 },
+  );
+  const size = parseInt(sizeRes.buffer.toString().trim(), 10);
+  if (!size || size < 1024) return null;
+
+  // ② 末尾 128KB 找 EOCD
+  const tailLen = Math.min(size, 128 * 1024);
+  const tail = await fetchApkRange(
+    file,
+    apkPath,
+    size - tailLen,
+    tailLen,
+    serial,
+  );
+  if (!tail) return null;
+  const eocdSig = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+  let eocd = -1;
+  for (let i = tail.length - 22; i >= 0; i--) {
+    if (tail.subarray(i, i + 4).equals(eocdSig)) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return null;
+  const cdSize = tail.readUInt32LE(eocd + 12);
+  const cdOffset = tail.readUInt32LE(eocd + 16);
+  if (!cdSize || cdOffset + cdSize > size) return null;
+
+  // ③ 中央目录 → 目标条目
+  const cd = await fetchApkRange(file, apkPath, cdOffset, cdSize, serial);
+  if (!cd) return null;
+  const item = findCentralDirEntry(cd, entry);
+  if (!item) return null;
+
+  // ④ 只取这一条
+  const raw = await fetchApkRange(
+    file,
+    apkPath,
+    item.offset,
+    item.compSize + 1024,
+    serial,
+  );
+  if (!raw || raw.length < 30 || raw.readUInt32LE(0) !== 0x04034b50)
+    return null;
+  const method = raw.readUInt16LE(8);
+  const compSize = raw.readUInt32LE(18) || item.compSize;
+  const nameLen = raw.readUInt16LE(26);
+  const extraLen = raw.readUInt16LE(28);
+  const dataStart = 30 + nameLen + extraLen;
+  const data = raw.subarray(dataStart, dataStart + compSize);
+  if (data.length < compSize) return null;
+  let out: Buffer = data;
+  if (method === 8) {
+    try {
+      out = zlib.inflateRawSync(data);
+    } catch {
+      return null;
+    }
+  } else if (method !== 0) {
+    return null;
+  }
+  return looksLikeEntry(entry, out) ? out : null;
+}
+
 async function extractApkEntry(
   file: string,
   apkPath: string,
@@ -762,7 +900,9 @@ async function extractApkEntry(
       return res.buffer;
     }
   }
-  return null;
+  // 这台手机上没有任何 unzip 变体（Android 7 的 toybox 就没有），
+  // 改走「读中央目录 + 只取需要的那一段」，不再依赖手机端工具。
+  return extractApkEntryByRange(file, apkPath, entry, serial);
 }
 
 /** 读一个已装应用的信息（应用名 / 版本） */
