@@ -245,8 +245,8 @@ export default {
   '投屏没在跑（可能被重启过），请点「开始投屏」重新连': 'Mirroring is not running (the app may have restarted). Click "Start mirroring" again',
   '投屏会在手机上启动一个服务，需要时再开': 'Mirroring starts a service on the phone — start it only when needed',
   '数据线断了，正在切到无线…': 'Cable unplugged — switching to Wi-Fi…',
-  '无线没接上：{why}。插回数据线点一次「开启」，再点「连接」':
-    'Wi-Fi did not connect: {why}. Plug the cable back in, tap “Enable”, then “Connect”',
+  '无线没接上：{why}。有些手机（比如这台）拔线后会把无线调试关掉 —— 插回数据线，点「开启」再点「连接」':
+    'Wi-Fi did not connect: {why}. Some phones (like this one) turn wireless debugging off when unplugged — plug the cable back in, tap “Enable”, then “Connect”',
   '设备没就绪：{why}；点投屏面板上的「重试」再试':
     'Device not ready: {why} — try “Retry” in the mirror panel',
   '设备没就绪：{why}': 'Device not ready: {why}',

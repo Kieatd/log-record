@@ -340,7 +340,16 @@ async function ensureDeviceReady(
     `$ adb connect ${ip}:${port}\n${conn.raw || conn.message}`,
     conn.ok ? 'ok' : 'err',
   );
-  if (!conn.ok) return { ok: false, why: conn.message };
+  if (!conn.ok) {
+    if (/refused/i.test(conn.message)) {
+      // 端口拒绝连接 = 手机上的 adbd 不在无线模式了，插回线才能重开
+      pushLog(
+        `${ip}:${port} 拒绝连接：手机上的无线调试已经被关掉了（这台手机拔线后会关）`,
+        'err',
+      );
+    }
+    return { ok: false, why: conn.message };
+  }
   if (!(await waitForDeviceReady(serial, 5000))) {
     return { ok: false, why: i18n.t('连上了，但设备一直是 offline') };
   }
@@ -548,9 +557,10 @@ async function handoffToWifi(prevSerial: string) {
     if (!ready.ok) {
       pushLog(`无线没接上：${ready.why}`, 'err');
       message.error(
-        i18n.t('无线没接上：{why}。插回数据线点一次「开启」，再点「连接」', {
-          why: ready.why,
-        }),
+        i18n.t(
+          '无线没接上：{why}。有些手机（比如这台）拔线后会把无线调试关掉 —— 插回数据线，点「开启」再点「连接」',
+          { why: ready.why },
+        ),
       );
       return;
     }
