@@ -1,10 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
-import {
-  CloseOutlined,
-  PushpinFilled,
-  PushpinOutlined,
-} from '@ant-design/icons-vue';
+import { PushpinFilled, PushpinOutlined } from '@ant-design/icons-vue';
 import ScrcpyView from './scrcpy-view.vue';
 
 /**
@@ -69,7 +65,8 @@ onUnmounted(() => {
 
 <template>
   <div class="mirror-win">
-    <!-- 整条都能拖窗口（按钮要 no-drag，否则点不动） -->
+    <!-- 整条都能拖窗口（按钮要 no-drag，否则点不动）
+         关闭/还原就用面板里的那个按钮（这里是重复按钮，已去掉） -->
     <div class="mw-bar">
       <span class="mw-title">{{ $t('投屏浮窗') }}</span>
       <a-tooltip :title="pinned ? $t('取消置顶') : $t('置顶')">
@@ -79,14 +76,6 @@ onUnmounted(() => {
         >
           <PushpinFilled v-if="pinned" />
           <PushpinOutlined v-else />
-        </span>
-      </a-tooltip>
-      <a-tooltip :title="$t('还原到主窗口')">
-        <span
-          class="mw-btn"
-          @click="closeWindow"
-        >
-          <CloseOutlined />
         </span>
       </a-tooltip>
     </div>
