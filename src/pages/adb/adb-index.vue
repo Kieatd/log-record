@@ -24,6 +24,7 @@ import {
   FolderOpenOutlined,
   CloseCircleFilled,
   ExclamationCircleFilled,
+  ExportOutlined,
   ImportOutlined,
   LoadingOutlined,
   MobileOutlined,
@@ -3014,10 +3015,22 @@ function deviceSubtitle(d: AdbDevice) {
     </div>
 
     <!-- 右边：投屏面板，常驻。点面板右上角的浮窗图标可搬成屏幕浮层 -->
-    <div
-      class="adb-side"
-      :class="{ 'adb-side-floating': mirrorFloat }"
-    >
+    <div class="adb-side">
+      <!-- 浮窗时这一列照旧留着（不改变原有布局），只在中间给个提示和还原入口 -->
+      <div
+        v-if="mirrorFloat"
+        class="mirror-docked-hint"
+      >
+        <ExportOutlined class="mirror-docked-icon" />
+        <div>{{ $t('投屏已变成浮窗') }}</div>
+        <a-button
+          size="small"
+          @click="mirrorFloat = false"
+        >
+          <ImportOutlined />
+          {{ $t('还原到右侧面板') }}
+        </a-button>
+      </div>
       <!-- 同一个组件实例：浮窗只是把 DOM 搬到 body 上，解码器不重建、流不断 -->
       <Teleport
         :disabled="!mirrorFloat"
@@ -3102,9 +3115,24 @@ function deviceSubtitle(d: AdbDevice) {
   min-height: 0;
 }
 
-/* 浮窗模式：右侧这一列收起来（DOM 已经被 Teleport 搬到 body 上了） */
-.adb-side-floating {
-  display: none;
+/* 浮窗时右侧这一列照旧占位（DOM 被 Teleport 搬到 body 上了，这里只放提示） */
+.mirror-docked-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  border: 1px dashed #d9d9d9;
+  border-radius: 6px;
+  color: #999;
+  font-size: 12px;
+  text-align: center;
+}
+
+.mirror-docked-icon {
+  font-size: 26px;
+  color: #ccc;
 }
 
 .mirror-float {
