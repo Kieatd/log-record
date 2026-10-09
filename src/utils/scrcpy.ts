@@ -12,6 +12,8 @@
  */
 import fs from 'fs';
 import { AdbServerClient } from '@yume-chan/adb';
+// 只用它跑一条 adb shell（清理手机上残留的 scrcpy 进程），不碰投屏主流程
+import { runAdb } from './adb';
 import type { Adb } from '@yume-chan/adb';
 import { AdbServerNodeTcpConnector } from '@yume-chan/adb-server-node-tcp';
 import { AdbScrcpyClient, AdbScrcpyOptionsLatest } from '@yume-chan/adb-scrcpy';
@@ -40,6 +42,8 @@ export interface ScrcpyStartOptions {
   serial?: string;
   /** 本地 scrcpy-server 文件路径 */
   serverFile: string;
+  /** adb 可执行文件路径：用来清理手机上残留的 scrcpy 进程 */
+  adbFile?: string;
   /** 最长边限制，越小越省流量、越流畅 */
   maxSize?: number;
   maxFps?: number;
@@ -55,6 +59,8 @@ export interface ScrcpyStartOptions {
 
 interface Session {
   adb: Adb;
+  /** 停止时用它去杀手机上的 server */
+  adbFile?: string;
   client: AdbScrcpyClient<any>;
   serial: string;
   /** 视频原始尺寸，注入触摸坐标时要带上 */
@@ -64,6 +70,38 @@ interface Session {
 }
 
 let session: Session | null = null;
+
+/**
+ * 杀掉手机上残留的 scrcpy 进程。
+ *
+ * 为什么必须手动杀：stopScrcpy() 只是关掉客户端的连接，手机上的 server 进程经常不会
+ * 立刻退出（实测在「停止/重新连接/窗口之间来回切」这种频繁换会话的场景下，能留下好几个）。
+ * 残留的 server 占着 `@scrcpy` 这个 localabstract socket，新 server 绑不上就秒退 ——
+ * 表现就是界面上的「启动投屏失败：scrcpy server exited prematurely」。
+ *
+ * 匹配写得很小心：只认「cmdline 以 app_process 开头、且含 scrcpy」的进程。
+ * 不能只 grep 关键字 —— 那条命令自身的 shell 里也含 "scrcpy"，会把自己杀掉。
+ */
+const KILL_STALE_SERVERS =
+  'for d in /proc/[0-9]*; do n=${d#/proc/}; [ "$n" = "$$" ] && continue; ' +
+  'if [ "$(dd if=$d/cmdline bs=1 count=11 2>/dev/null)" = "app_process" ] && ' +
+  'grep -q scrcpy $d/cmdline 2>/dev/null; then kill -9 $n 2>/dev/null; fi; done';
+
+async function killStaleServers(
+  adbFile: string | undefined,
+  serial?: string,
+): Promise<void> {
+  if (!adbFile) return;
+  try {
+    const args = ['shell', KILL_STALE_SERVERS];
+    if (serial) args.unshift('-s', serial);
+    await runAdb(adbFile, args, { timeout: 8000 });
+    // 给内核一点时间回收 socket（不然新 server 可能还是绑不上）
+    await new Promise((r) => setTimeout(r, 200));
+  } catch {
+    /* 清不掉也不拦着流程：真起不来的时候上面的报错会说明问题 */
+  }
+}
 
 export function isScrcpyRunning(): boolean {
   return session !== null;
@@ -98,6 +136,8 @@ export async function startScrcpy(options: ScrcpyStartOptions): Promise<{
   if (session) {
     await stopScrcpy();
   }
+  // 上一场可能没退干净（占着 @scrcpy socket）→ 起新的之前先清一下
+  await killStaleServers(options.adbFile, options.serial);
   if (!fs.existsSync(options.serverFile)) {
     return { ok: false, message: `找不到 scrcpy-server：${options.serverFile}` };
   }
@@ -179,6 +219,7 @@ export async function startScrcpy(options: ScrcpyStartOptions): Promise<{
 
     session = {
       adb,
+      adbFile: options.adbFile,
       client,
       serial,
       videoWidth: meta.width,
@@ -242,6 +283,9 @@ export async function stopScrcpy(): Promise<void> {
   session = null;
   if (!current) return;
   current.stopRequested = true;
+  // 先杀手机上的 server：只关客户端连接的话它会赖着不走，
+  // 下次起会话就撞 socket（scrcpy server exited prematurely）
+  await killStaleServers(current.adbFile, current.serial);
   try {
     await current.client.close();
   } catch {

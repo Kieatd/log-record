@@ -764,6 +764,7 @@ const createWindow = () => {
       return startScrcpy({
         serial: payload?.serial,
         serverFile: scrcpyServerFile,
+        adbFile: info.file,
         maxSize: payload?.maxSize ?? 1024,
         maxFps: payload?.maxFps ?? 30,
         videoBitRate: payload?.videoBitRate ?? 4_000_000,
