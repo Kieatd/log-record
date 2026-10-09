@@ -79,13 +79,19 @@ let session: Session | null = null;
  * 残留的 server 占着 `@scrcpy` 这个 localabstract socket，新 server 绑不上就秒退 ——
  * 表现就是界面上的「启动投屏失败：scrcpy server exited prematurely」。
  *
- * 匹配写得很小心：只认「cmdline 以 app_process 开头、且含 scrcpy」的进程。
- * 不能只 grep 关键字 —— 那条命令自身的 shell 里也含 "scrcpy"，会把自己杀掉。
+ * 两个坑都踩过，所以这么写：
+ *  1. 不能遍历 /proc/[0-9]* 逐个 fork dd/grep —— 这台手机有 400+ 进程，
+ *     那样一条命令要 6 秒（开始/停止投屏都会卡一下）。先用 ps 把候选缩到
+ *     「名字是 app_process」的那几个（通常 0～2 个），再逐个看 cmdline。
+ *  2. 不能只 grep 关键字 —— 命令自身的 shell 里也含 "scrcpy"，会把自己杀掉；
+ *     所以先按 app_process 过滤，外加 $$ 保护。
+ * 最后 echo 杀掉的数量：没杀到就不用等（省掉那段 sleep）。
  */
 const KILL_STALE_SERVERS =
-  'for d in /proc/[0-9]*; do n=${d#/proc/}; [ "$n" = "$$" ] && continue; ' +
-  'if [ "$(dd if=$d/cmdline bs=1 count=11 2>/dev/null)" = "app_process" ] && ' +
-  'grep -q scrcpy $d/cmdline 2>/dev/null; then kill -9 $n 2>/dev/null; fi; done';
+  'k=0; for p in $(ps 2>/dev/null | grep -F app_process | tr -s " " | cut -d" " -f2); ' +
+  'do [ "$p" = "$$" ] && continue; ' +
+  'grep -q scrcpy /proc/$p/cmdline 2>/dev/null && ' +
+  '{ kill -9 $p 2>/dev/null; k=$((k+1)); }; done; echo $k';
 
 async function killStaleServers(
   adbFile: string | undefined,
@@ -95,9 +101,11 @@ async function killStaleServers(
   try {
     const args = ['shell', KILL_STALE_SERVERS];
     if (serial) args.unshift('-s', serial);
-    await runAdb(adbFile, args, { timeout: 8000 });
-    // 给内核一点时间回收 socket（不然新 server 可能还是绑不上）
-    await new Promise((r) => setTimeout(r, 200));
+    const res = await runAdb(adbFile, args, { timeout: 8000 });
+    // 真要杀过才等一下（给内核回收 socket 的时间）；没杀到就直接走，别白等
+    if (Number(String(res.stdout || '').trim()) > 0) {
+      await new Promise((r) => setTimeout(r, 150));
+    }
   } catch {
     /* 清不掉也不拦着流程：真起不来的时候上面的报错会说明问题 */
   }
