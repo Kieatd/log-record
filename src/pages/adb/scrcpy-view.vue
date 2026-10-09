@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   DesktopOutlined,
+  ExportOutlined,
+  ImportOutlined,
   LoadingOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -14,7 +16,7 @@ import {
   WebGLVideoFrameRenderer,
 } from '@yume-chan/scrcpy-decoder-webcodecs';
 
-const props = defineProps<{ serial: string }>();
+const props = defineProps<{ serial: string; float?: boolean }>();
 const emit = defineEmits<{
   (e: 'log', text: string): void;
   (e: 'running', value: boolean): void;
@@ -22,6 +24,8 @@ const emit = defineEmits<{
   // 面板上的「开始投屏 / 重试 / 重新连接」交给父组件处理：
   // 父组件会先确认设备真的可用（无线可能还 offline，要先重连），再调 start()
   (e: 'retry'): void;
+  // 切换浮窗：面板搬到屏幕浮层，切到别的页面也能一边看一边操作
+  (e: 'float'): void;
 }>();
 
 const i18n = useI18n();
@@ -752,6 +756,18 @@ defineExpose({ stop, start });
           class="sv-icon sv-icon-stop"
           @click="stop()"
         />
+      </a-tooltip>
+      <!-- 浮窗：搬成屏幕浮层，切到「网络」等页面也能一边看一边操作 -->
+      <a-tooltip
+        :title="props.float ? $t('还原到右侧面板') : $t('变成浮窗（可拖动）')"
+      >
+        <span
+          class="sv-icon"
+          @click="$emit('float')"
+        >
+          <ImportOutlined v-if="props.float" />
+          <ExportOutlined v-else />
+        </span>
       </a-tooltip>
     </div>
 

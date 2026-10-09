@@ -24,6 +24,7 @@ import {
   FolderOpenOutlined,
   CloseCircleFilled,
   ExclamationCircleFilled,
+  ImportOutlined,
   LoadingOutlined,
   MobileOutlined,
   PictureOutlined,
@@ -182,6 +183,107 @@ const mirrorRef = ref<{
   start: () => Promise<boolean>;
   stop: () => Promise<void>;
 } | null>(null);
+
+/* ---------------- 投屏浮窗 ---------------- */
+
+const FLOAT_KEY = 'Log Record$$mirrorFloat';
+const FLOAT_POS_KEY = 'Log Record$$mirrorFloatPos';
+const FLOAT_SIZE_KEY = 'Log Record$$mirrorFloatSize';
+const FLOAT_MIN_W = 220;
+const FLOAT_MIN_H = 320;
+/** 默认大小：手机是竖屏，和右侧面板一样 340 宽差不多正好 */
+const FLOAT_DEFAULT = { w: 340, h: 620 };
+
+function readFloatJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return (JSON.parse(raw) as T) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const mirrorFloat = ref(localStorage.getItem(FLOAT_KEY) === '1');
+const floatSize = ref(
+  readFloatJson(FLOAT_SIZE_KEY, { w: FLOAT_DEFAULT.w, h: FLOAT_DEFAULT.h }),
+);
+const floatPos = ref(
+  readFloatJson(FLOAT_POS_KEY, {
+    x: Math.max(8, window.innerWidth - FLOAT_DEFAULT.w - 24),
+    y: 80,
+  }),
+);
+
+const floatStyle = computed(() => ({
+  left: `${floatPos.value.x}px`,
+  top: `${floatPos.value.y}px`,
+  width: `${floatSize.value.w}px`,
+  height: `${floatSize.value.h}px`,
+}));
+
+/** 别让浮窗跑到屏幕外面去（至少留标题栏可见） */
+function clampFloatIntoView() {
+  const maxX = Math.max(8, window.innerWidth - floatSize.value.w - 8);
+  const maxY = Math.max(8, window.innerHeight - 48);
+  floatPos.value = {
+    x: Math.min(Math.max(8, floatPos.value.x), maxX),
+    y: Math.min(Math.max(8, floatPos.value.y), maxY),
+  };
+}
+
+function saveFloatLayout() {
+  localStorage.setItem(FLOAT_POS_KEY, JSON.stringify(floatPos.value));
+  localStorage.setItem(FLOAT_SIZE_KEY, JSON.stringify(floatSize.value));
+}
+
+watch(mirrorFloat, (v) => {
+  localStorage.setItem(FLOAT_KEY, v ? '1' : '0');
+  if (v) clampFloatIntoView();
+});
+
+/** 拖标题栏移动（用 window 上的 pointermove，鼠标滑出浮窗也不丢） */
+function startFloatDrag(e: PointerEvent) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const sx = e.clientX;
+  const sy = e.clientY;
+  const { x, y } = floatPos.value;
+  const onMove = (ev: PointerEvent) => {
+    floatPos.value = { x: x + ev.clientX - sx, y: y + ev.clientY - sy };
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    clampFloatIntoView();
+    saveFloatLayout();
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+/** 拖右下角缩放 */
+function startFloatResize(e: PointerEvent) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const sx = e.clientX;
+  const sy = e.clientY;
+  const { w, h } = floatSize.value;
+  const onMove = (ev: PointerEvent) => {
+    floatSize.value = {
+      w: Math.max(FLOAT_MIN_W, w + ev.clientX - sx),
+      h: Math.max(FLOAT_MIN_H, h + ev.clientY - sy),
+    };
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    saveFloatLayout();
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
 
 const stayAwake = ref<StayAwakeState | null>(null);
 const busyStayOn = ref(false);
@@ -788,7 +890,11 @@ async function downloadPhoneFile(item: { name: string; path: string }) {
   }
   fileBusy.value = item.path;
   try {
-    const res = await api.adbPull(item.path, downloadDir.value, currentSerial.value);
+    const res = await api.adbPull(
+      item.path,
+      downloadDir.value,
+      currentSerial.value,
+    );
     if (res.ok) {
       pushLog(`$ adb pull ${item.path}\n  → ${res.localPath}`, 'ok');
       message.success(i18n.t(`已下载到 ${res.localPath}`));
@@ -2726,7 +2832,11 @@ function deviceSubtitle(d: AdbDevice) {
             {{ $t('下载到') }}
             {{ downloadDir || $t('（未设置，第一次下载时让你选）') }}
           </span>
-          <a-button size="small" type="link" @click="changeDownloadDir">
+          <a-button
+            size="small"
+            type="link"
+            @click="changeDownloadDir"
+          >
             {{ downloadDir ? $t('改下载位置') : $t('设下载位置') }}
           </a-button>
         </div>
@@ -2903,20 +3013,58 @@ function deviceSubtitle(d: AdbDevice) {
       </div>
     </div>
 
-    <!-- 右边：投屏面板，常驻 -->
-    <div class="adb-side">
-      <ScrcpyView
-        ref="mirrorRef"
-        :serial="currentSerial"
-        @retry="retryMirror"
-        @log="(t: string) => pushLog(t)"
-        @running="
-          (v: boolean) => {
-            mirrorRunning = v;
-            if (!v) void loadDevices();
-          }
-        "
-      />
+    <!-- 右边：投屏面板，常驻。点面板右上角的浮窗图标可搬成屏幕浮层 -->
+    <div
+      class="adb-side"
+      :class="{ 'adb-side-floating': mirrorFloat }"
+    >
+      <!-- 同一个组件实例：浮窗只是把 DOM 搬到 body 上，解码器不重建、流不断 -->
+      <Teleport
+        :disabled="!mirrorFloat"
+        to="body"
+      >
+        <div
+          class="mirror-float"
+          :class="{ 'mirror-float-on': mirrorFloat }"
+          :style="mirrorFloat ? floatStyle : undefined"
+        >
+          <div
+            v-if="mirrorFloat"
+            class="mirror-float-bar"
+            @pointerdown="startFloatDrag"
+          >
+            <span class="mirror-float-title">{{ $t('投屏浮窗') }}</span>
+            <a-tooltip :title="$t('还原到右侧面板')">
+              <a-button
+                size="small"
+                type="text"
+                @click="mirrorFloat = false"
+              >
+                <ImportOutlined />
+              </a-button>
+            </a-tooltip>
+          </div>
+          <ScrcpyView
+            ref="mirrorRef"
+            :serial="currentSerial"
+            :float="mirrorFloat"
+            @retry="retryMirror"
+            @float="mirrorFloat = !mirrorFloat"
+            @log="(t: string) => pushLog(t)"
+            @running="
+              (v: boolean) => {
+                mirrorRunning = v;
+                if (!v) void loadDevices();
+              }
+            "
+          />
+          <div
+            v-if="mirrorFloat"
+            class="mirror-float-resize"
+            @pointerdown="startFloatResize"
+          />
+        </div>
+      </Teleport>
     </div>
   </div>
 </template>
@@ -2952,6 +3100,67 @@ function deviceSubtitle(d: AdbDevice) {
   flex-shrink: 0;
   height: 100%;
   min-height: 0;
+}
+
+/* 浮窗模式：右侧这一列收起来（DOM 已经被 Teleport 搬到 body 上了） */
+.adb-side-floating {
+  display: none;
+}
+
+.mirror-float {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 浮窗：固定定位 + 置顶（z-index 低于 antd 弹层 1000，弹窗照常盖住它） */
+.mirror-float-on {
+  position: fixed;
+  z-index: 900;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+  overflow: hidden;
+}
+
+/* 浮窗里的投屏面板：去掉自己的边框圆角，铺满整个浮窗 */
+.mirror-float-on :deep(.scrcpy-view) {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.mirror-float-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 2px 4px 2px 10px;
+  background: #2a2a2a;
+  color: #ccc;
+  font-size: 12px;
+  cursor: move;
+  user-select: none;
+}
+
+.mirror-float-title {
+  flex: 1;
+}
+
+.mirror-float-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(
+    135deg,
+    rgb(255 255 255 / 0%) 50%,
+    rgb(255 255 255 / 45%) 50%
+  );
 }
 
 /* ---- adb 状态行 ---- */
