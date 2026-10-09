@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   nativeImage,
   ipcMain,
@@ -797,6 +798,18 @@ const createWindow = () => {
   ipcMain.handle('scrcpy:scroll', (_, payload: any) => injectScroll(payload));
   ipcMain.handle('scrcpy:key', (_, payload: any) => injectKey(payload));
   ipcMain.handle('scrcpy:text', (_, text: string) => injectText(text));
+  /** 读电脑的剪贴板（投屏时把电脑复制的内容输入到手机） */
+  ipcMain.handle('clipboard:readText', () => {
+    try {
+      return { ok: true, text: clipboard.readText() };
+    } catch (err) {
+      return {
+        ok: false,
+        text: '',
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
   ipcMain.handle('scrcpy:power', (_, on: boolean) => setScreenPower(on));
 
   /* ---------------- monkey 压测 ---------------- */

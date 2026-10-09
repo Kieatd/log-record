@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { message } from 'ant-design-vue';
 import { useI18n } from 'vue-i18n';
 import {
+  CopyOutlined,
   DesktopOutlined,
   ExportOutlined,
   ImportOutlined,
@@ -35,6 +37,82 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 const running = ref(false);
 const starting = ref(false);
 const errorText = ref('');
+
+/* ---------------- 把电脑复制的内容输入到手机 ---------------- */
+
+const CLIP_HISTORY_KEY = 'Log Record$$scrcpyTextHistory';
+const CLIP_HISTORY_MAX = 10;
+
+const clipOpen = ref(false);
+const clipCurrent = ref('');
+const clipLoading = ref(false);
+const clipSending = ref(false);
+
+/** 最近输入过的内容（点一下就能再输一次） */
+const clipHistory = ref<string[]>(
+  (() => {
+    try {
+      const raw = localStorage.getItem(CLIP_HISTORY_KEY);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  })(),
+);
+
+function saveClipHistory(list: string[]) {
+  clipHistory.value = list.slice(0, CLIP_HISTORY_MAX);
+  try {
+    localStorage.setItem(CLIP_HISTORY_KEY, JSON.stringify(clipHistory.value));
+  } catch {
+    /* 存不下就算了（只是历史记录） */
+  }
+}
+
+/** 读一次电脑剪贴板里的文字 */
+async function loadClipboard() {
+  clipLoading.value = true;
+  try {
+    const res = await api.readClipboard?.();
+    clipCurrent.value = res?.ok ? String(res.text || '') : '';
+  } catch {
+    clipCurrent.value = '';
+  } finally {
+    clipLoading.value = false;
+  }
+}
+
+/** 弹层开关：antd 自己管开关，我们只在打开时顺手读一次剪贴板 */
+function onClipOpenChange(v: boolean) {
+  clipOpen.value = v;
+  if (v) void loadClipboard();
+}
+
+/** 把一段文字输入到手机（走 scrcpy 控制通道；长文本在 main 里分片） */
+async function sendTextToPhone(text: string) {
+  const str = String(text ?? '');
+  if (!str.trim()) return;
+  clipSending.value = true;
+  try {
+    const res = await api.scrcpyText(str);
+    if (res?.ok) {
+      message.success(i18n.t('已输入到手机'));
+      emit('log', `已输入到手机（${str.length} 字）`);
+      saveClipHistory([str, ...clipHistory.value.filter((x) => x !== str)]);
+    } else {
+      message.error(res?.message || i18n.t('输入失败'));
+      emit('log', `输入失败：${res?.message || '未知原因'}`);
+    }
+  } finally {
+    clipSending.value = false;
+  }
+}
+
+/** 点弹层里的「输入到手机」 */
+function sendCurrentClip() {
+  return sendTextToPhone(clipCurrent.value);
+}
 
 // 启动期间给点进度反馈：手机侧起 scrcpy 服务要 2 秒左右，
 // 只转个圈用户不知道是在等还是在卡。
@@ -683,6 +761,23 @@ const KEY_MAP: Record<string, number> = {
 
 function onKeyDown(e: KeyboardEvent) {
   if (!running.value) return;
+  // Cmd/Ctrl+V：把电脑剪贴板的内容输入到手机（比在手机上长按粘贴快）
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+    e.preventDefault();
+    void (async () => {
+      try {
+        const res = await api.readClipboard?.();
+        if (res?.ok && String(res.text || '').trim()) {
+          await sendTextToPhone(String(res.text));
+        } else {
+          message.warning(i18n.t('电脑剪贴板是空的'));
+        }
+      } catch {
+        message.error(i18n.t('读剪贴板失败'));
+      }
+    })();
+    return;
+  }
   const code = KEY_MAP[e.key];
   if (code !== undefined) {
     e.preventDefault();
@@ -794,6 +889,83 @@ defineExpose({ stop, start });
           @click="stop()"
         />
       </a-tooltip>
+      <!-- 剪贴板：把电脑复制的内容输入到手机（Ctrl/Cmd+V 也行） -->
+      <a-popover
+        trigger="click"
+        placement="bottomRight"
+        :overlay-style="{ width: '320px' }"
+        @open-change="onClipOpenChange"
+      >
+        <template #title>
+          <div class="clip-head">
+            <span>{{ $t('输入电脑上复制的内容') }}</span>
+            <a-button
+              type="link"
+              size="small"
+              :loading="clipLoading"
+              @click="loadClipboard"
+            >
+              {{ $t('重新读取') }}
+            </a-button>
+          </div>
+        </template>
+        <template #content>
+          <div class="clip-body">
+            <div class="clip-tip">
+              {{ $t('也可以直接在投屏画面上按 Ctrl/Cmd+V') }}
+            </div>
+            <div class="clip-current">
+              <div class="clip-label">{{ $t('电脑剪贴板') }}</div>
+              <div
+                v-if="clipCurrent"
+                class="clip-text"
+              >
+                {{ clipCurrent }}
+              </div>
+              <div
+                v-else
+                class="clip-empty"
+              >
+                {{ clipLoading ? $t('读取中…') : $t('（空）') }}
+              </div>
+              <a-button
+                size="small"
+                type="primary"
+                block
+                :disabled="!clipCurrent"
+                :loading="clipSending"
+                @click="sendCurrentClip"
+              >
+                {{ $t('输入到手机') }}
+              </a-button>
+            </div>
+            <div
+              v-if="clipHistory.length"
+              class="clip-history"
+            >
+              <div class="clip-label">
+                {{ $t('最近输入过的（点一下再输一次）') }}
+              </div>
+              <div
+                v-for="(item, i) in clipHistory"
+                :key="i"
+                class="clip-item"
+                :title="item"
+                @click="sendTextToPhone(item)"
+              >
+                {{ item }}
+              </div>
+            </div>
+          </div>
+        </template>
+        <span
+          class="sv-icon"
+          :class="{ 'sv-icon-on': clipOpen }"
+        >
+          <CopyOutlined />
+        </span>
+      </a-popover>
+
       <!-- 浮窗：开独立窗口（能拖到桌面任何地方、可置顶）；浮窗里这个按钮=还原 -->
       <a-tooltip
         :title="
@@ -1021,6 +1193,73 @@ defineExpose({ stop, start });
   padding: 12px;
   text-align: center;
 }
+/* 剪贴板弹层 */
+.clip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.clip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.clip-tip {
+  color: #999;
+  font-size: 11px;
+}
+.clip-label {
+  margin-bottom: 4px;
+  color: #888;
+  font-size: 11px;
+}
+.clip-text {
+  max-height: 90px;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  background: #fafafa;
+  color: #333;
+  font-size: 12px;
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+.clip-empty {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border: 1px dashed #eee;
+  border-radius: 4px;
+  color: #bbb;
+  font-size: 12px;
+}
+.clip-history {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 6px;
+}
+.clip-item {
+  max-width: 100%;
+  margin-bottom: 4px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: #555;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-item:hover {
+  background: #f2f6f6;
+  color: var(--color-main);
+}
+.sv-icon-on {
+  color: #fff;
+}
+
 .sv-tip-error {
   color: #f48771;
   flex-direction: column;

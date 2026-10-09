@@ -171,6 +171,18 @@ export default {
   '没拿到文件路径，请用「点击选择」': 'Could not read the file path — use "click to pick" instead',
   '没有检测到设备，检查数据线和手机上的「允许 USB 调试」': 'No device detected — check the cable and "Allow USB debugging" on the phone',
   '没检测到设备。插上数据线，手机弹「允许 USB 调试」时点允许': 'No device detected. Plug in the cable and tap "Allow USB debugging" on the phone.',
+  输入电脑上复制的内容: 'Send clipboard text to the phone',
+  '也可以直接在投屏画面上按 Ctrl/Cmd+V':
+    'You can also press Ctrl/Cmd+V on the mirror picture',
+  电脑剪贴板: 'Computer clipboard',
+  '（空）': '(empty)',
+  输入到手机: 'Type into phone',
+  '最近输入过的（点一下再输一次）': 'Recently sent (click to send again)',
+  重新读取: 'Re-read',
+  已输入到手机: 'Sent to the phone',
+  输入失败: 'Failed to send',
+  电脑剪贴板是空的: 'The computer clipboard is empty',
+  读剪贴板失败: 'Could not read the clipboard',
   '启动超时（手机没响应，试试点「重启 adb」或重新插线）':
     'Start timed out (the phone did not respond — try “Restart adb” or replug the cable)',
   投屏已在独立浮窗中: 'Mirroring is in a separate window',

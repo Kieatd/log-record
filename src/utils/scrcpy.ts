@@ -427,11 +427,25 @@ export async function injectKey(payload: {
 }
 
 /** 注入文本（只支持 ASCII，中文得走剪贴板） */
+/**
+ * scrcpy 协议单条文本消息有长度上限（官方客户端按 300 字符切），
+ * 这里照做 —— 否则粘贴长文本（URL、一大段 token）会失败。
+ */
+const TEXT_CHUNK = 300;
+
 export async function injectText(text: string): Promise<{ ok: boolean; message?: string }> {
   const writer = session?.client.controller;
   if (!writer) return { ok: false, message: '投屏没在跑' };
   try {
-    await writer.injectText(text);
+    const str = String(text ?? '');
+    if (!str) return { ok: true };
+    for (let i = 0; i < str.length; i += TEXT_CHUNK) {
+      await writer.injectText(str.slice(i, i + TEXT_CHUNK));
+      // 分片之间喘口气，手机那边的注入是异步的
+      if (i + TEXT_CHUNK < str.length) {
+        await new Promise((r) => setTimeout(r, 30));
+      }
+    }
     return { ok: true };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
