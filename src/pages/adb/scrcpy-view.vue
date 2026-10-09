@@ -36,6 +36,24 @@ const running = ref(false);
 const starting = ref(false);
 const errorText = ref('');
 
+// 启动期间给点进度反馈：手机侧起 scrcpy 服务要 2 秒左右，
+// 只转个圈用户不知道是在等还是在卡。
+const startingHint = ref('');
+const startingSecs = ref(0);
+let startTick: ReturnType<typeof setInterval> | null = null;
+
+function beginStartProgress() {
+  startingHint.value = '';
+  startingSecs.value = 0;
+  if (startTick) clearInterval(startTick);
+  startTick = setInterval(() => (startingSecs.value += 1), 1000);
+}
+
+function endStartProgress() {
+  if (startTick) clearInterval(startTick);
+  startTick = null;
+}
+
 /**
  * 投屏时显示的手机占用。
  * CPU 要两次 /proc/stat 采样做差，所以第一次是 null（显示成 —）。
@@ -275,6 +293,7 @@ async function start(): Promise<boolean> {
   // 已经在跑（或正在起）就交给它，不当失败
   if (running.value || starting.value) return true;
   starting.value = true;
+  beginStartProgress();
   errorText.value = '';
   meta.value = null;
   decoder = null;
@@ -287,12 +306,25 @@ async function start(): Promise<boolean> {
     const maxSize = 1024;
     const maxFps = 30;
     const videoBitRate = 4_000_000;
-    const res = await api.scrcpyStart(
-      props.serial || undefined,
-      maxSize,
-      maxFps,
-      videoBitRate,
-    );
+    // 超时兜底：正常 2 秒左右就回来了，20 秒还没动静说明手机/adb 出问题了，
+    // 不能一直卡在「正在启动投屏」
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    const res = await Promise.race([
+      api.scrcpyStart(props.serial || undefined, maxSize, maxFps, videoBitRate),
+      new Promise<never>((_, reject) => {
+        timeoutTimer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                i18n.t('启动超时（手机没响应，试试点「重启 adb」或重新插线）'),
+              ),
+            ),
+          20000,
+        );
+      }),
+    ]).finally(() => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    });
     if (!res.ok) {
       errorText.value = res.message;
       starting.value = false;
@@ -314,6 +346,7 @@ async function start(): Promise<boolean> {
     return false;
   } finally {
     starting.value = false;
+    endStartProgress();
   }
 }
 
@@ -685,7 +718,11 @@ onMounted(() => {
     api.onScrcpyPacket((p: any) => onPacket(p));
   }
   if (api.onScrcpyLog) {
-    api.onScrcpyLog((line: string) => emit('log', line));
+    api.onScrcpyLog((line: string) => {
+      // 启动期间把「推送 server / 起服务 / 等画面」这些当进度提示显示出来
+      if (starting.value) startingHint.value = line;
+      emit('log', line);
+    });
   }
   if (api.onScrcpyError) {
     api.onScrcpyError((msg: string) => {
@@ -793,10 +830,19 @@ defineExpose({ stop, start });
     <div class="sv-body">
       <div
         v-if="starting"
-        class="sv-tip"
+        class="sv-tip sv-tip-starting"
       >
-        <LoadingOutlined spin />
-        {{ $t('正在启动投屏…') }}
+        <div class="sv-tip-line">
+          <LoadingOutlined spin />
+          {{ $t('正在启动投屏…') }}
+          <span v-if="startingSecs">{{ startingSecs }}s</span>
+        </div>
+        <div
+          v-if="startingHint"
+          class="sv-tip-hint"
+        >
+          {{ startingHint }}
+        </div>
       </div>
       <div
         v-else-if="errorText"
@@ -834,7 +880,7 @@ defineExpose({ stop, start });
       <canvas
         ref="canvasRef"
         class="sv-canvas"
-        :class="{ 'sv-canvas-hidden': !running && !starting }"
+        :class="{ 'sv-canvas-hidden': !running || starting }"
         tabindex="0"
         @mousedown="onMouseDown"
         @wheel="onWheel"
@@ -978,6 +1024,21 @@ defineExpose({ stop, start });
 .sv-tip-error {
   color: #f48771;
   flex-direction: column;
+}
+.sv-tip-starting {
+  flex-direction: column;
+  gap: 6px;
+}
+.sv-tip-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sv-tip-hint {
+  max-width: 90%;
+  color: #777;
+  font-size: 11px;
+  text-align: center;
 }
 .sv-idle {
   flex-direction: column;
