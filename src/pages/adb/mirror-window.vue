@@ -37,6 +37,14 @@ async function togglePin() {
   await api.setMirrorAlwaysOnTop?.(pinned.value);
 }
 
+/**
+ * 面板上的「开始投屏 / 重试 / 重新连接」都 emit retry —— 这里必须接住，
+ * 否则停止之后再也开不起来（点了等于没点）。
+ */
+async function startMirror() {
+  await mirrorRef.value?.start();
+}
+
 /** 投屏起停回报给主进程：召回时主窗口据此决定要不要自动接着投 */
 function onRunning(v: boolean) {
   api.setMirrorWindowRunning?.(v);
@@ -88,6 +96,7 @@ onUnmounted(() => {
       :serial="serial"
       :float="true"
       @float="closeWindow"
+      @retry="startMirror"
       @log="relayLog"
       @running="onRunning"
     />
