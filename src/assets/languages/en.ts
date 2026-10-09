@@ -257,7 +257,8 @@ export default {
   '等待画面…': 'Waiting for video…',
   '重新连接': 'Reconnect',
   '关闭投屏': 'Close mirror',
-  '点一下=轻触，拖动=滑动，滚轮=滚动，方向键/回车可用': 'Click = tap, drag = swipe, wheel = scroll, arrow keys / Enter work',
+  '点一下=轻触，拖动=滑动，滚轮=滚动，方向键/回车可用，Cmd/Ctrl+V=粘贴电脑剪贴板':
+    'Click = tap, drag = swipe, wheel = scroll, arrow keys / Enter work, Cmd/Ctrl+V = paste from the computer',
   '手机屏幕是黑的（息屏了），投出来就是全黑': 'The phone screen is off, so the mirror is all black',
   '读取安装时间': 'Loading install times',
   '连接后自动开启': 'Auto-enable on connect',

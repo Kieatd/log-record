@@ -759,25 +759,42 @@ const KEY_MAP: Record<string, number> = {
   F5: 26,
 };
 
+/** 读电脑剪贴板 → 输入到手机（窗口快捷键和弹层里都用它） */
+async function pasteFromClipboard() {
+  try {
+    const res = await api.readClipboard?.();
+    const text = String(res?.text || '');
+    if (res?.ok && text.trim()) {
+      await sendTextToPhone(text);
+    } else {
+      message.warning(i18n.t('电脑剪贴板是空的'));
+      emit('log', '按了粘贴，但电脑剪贴板是空的');
+    }
+  } catch {
+    message.error(i18n.t('读剪贴板失败'));
+    emit('log', '读电脑剪贴板失败');
+  }
+}
+
+/**
+ * Cmd/Ctrl+V：把电脑剪贴板的内容输入到手机。
+ *
+ * 绑在 window 上而不是画布上 —— 用户常常刚在别的页面（比如网络页）复制完就按快捷键，
+ * 这时焦点根本不在画布上，绑画布就会「按了没反应」。
+ * 但应用自己的输入框里要正常粘贴，所以遇到 input/textarea 就放行。
+ */
+function onGlobalKeyDown(e: KeyboardEvent) {
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'v') return;
+  const el = e.target as HTMLElement | null;
+  const tag = String(el?.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || el?.isContentEditable) return;
+  if (!running.value) return;
+  e.preventDefault();
+  void pasteFromClipboard();
+}
+
 function onKeyDown(e: KeyboardEvent) {
   if (!running.value) return;
-  // Cmd/Ctrl+V：把电脑剪贴板的内容输入到手机（比在手机上长按粘贴快）
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
-    e.preventDefault();
-    void (async () => {
-      try {
-        const res = await api.readClipboard?.();
-        if (res?.ok && String(res.text || '').trim()) {
-          await sendTextToPhone(String(res.text));
-        } else {
-          message.warning(i18n.t('电脑剪贴板是空的'));
-        }
-      } catch {
-        message.error(i18n.t('读剪贴板失败'));
-      }
-    })();
-    return;
-  }
   const code = KEY_MAP[e.key];
   if (code !== undefined) {
     e.preventDefault();
@@ -812,6 +829,7 @@ onMounted(() => {
   if (api.onScrcpyPacket) {
     api.onScrcpyPacket((p: any) => onPacket(p));
   }
+  window.addEventListener('keydown', onGlobalKeyDown);
   if (api.onScrcpyLog) {
     api.onScrcpyLog((line: string) => {
       // 启动期间把「推送 server / 起服务 / 等画面」这些当进度提示显示出来
@@ -836,6 +854,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', onGlobalKeyDown);
   detachMouse();
   offPacket?.();
   stopStats();
@@ -1088,7 +1107,11 @@ defineExpose({ stop, start });
       v-if="running"
       class="sv-foot"
     >
-      {{ $t('点一下=轻触，拖动=滑动，滚轮=滚动，方向键/回车可用') }}
+      {{
+        $t(
+          '点一下=轻触，拖动=滑动，滚轮=滚动，方向键/回车可用，Cmd/Ctrl+V=粘贴电脑剪贴板',
+        )
+      }}
     </div>
   </div>
 </template>
