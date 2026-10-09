@@ -216,6 +216,22 @@ const floatPos = ref(
   }),
 );
 
+/** 停靠时那一列（用来量「变成浮窗前」的实际大小） */
+const dockRef = ref<HTMLElement | null>(null);
+
+/**
+ * 把浮窗大小对齐成「变成浮窗前那块区域」的实际大小。
+ * 以前用固定默认值(340×620)，比页面里那块区域矮一截，看起来像变小了。
+ */
+function syncFloatSizeToDock() {
+  const el = dockRef.value;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  if (r.width > 0 && r.height > 0) {
+    floatSize.value = { w: Math.round(r.width), h: Math.round(r.height) };
+  }
+}
+
 const floatStyle = computed(() => ({
   left: `${floatPos.value.x}px`,
   top: `${floatPos.value.y}px`,
@@ -240,7 +256,11 @@ function saveFloatLayout() {
 
 watch(mirrorFloat, (v) => {
   localStorage.setItem(FLOAT_KEY, v ? '1' : '0');
-  if (v) clampFloatIntoView();
+  if (!v) return;
+  // 大小 = 变成浮窗前那块区域的大小（原地弹出，尺寸不变）
+  syncFloatSizeToDock();
+  clampFloatIntoView();
+  saveFloatLayout();
 });
 
 /** 拖标题栏移动（用 window 上的 pointermove，鼠标滑出浮窗也不丢） */
@@ -1775,6 +1795,12 @@ onMounted(async () => {
   localIp.value = await api.getIPAddress();
   await loadDevices();
   startDevicePoll(); // 插线/拔线自己长出来，不用手点「重新扫描」
+  // 上次退出时是浮窗状态：等布局出来再按那一列的实际大小对齐
+  if (mirrorFloat.value) {
+    await nextTick();
+    syncFloatSizeToDock();
+    clampFloatIntoView();
+  }
   // 这两个都各自要跑几次 adb，串着等会让页面半天才可交互 —— 并行发出去
   loadStayAwake();
   loadInstallConfirm();
@@ -3015,7 +3041,10 @@ function deviceSubtitle(d: AdbDevice) {
     </div>
 
     <!-- 右边：投屏面板，常驻。点面板右上角的浮窗图标可搬成屏幕浮层 -->
-    <div class="adb-side">
+    <div
+      ref="dockRef"
+      class="adb-side"
+    >
       <!-- 浮窗时这一列照旧留着（不改变原有布局），只在中间给个提示和还原入口 -->
       <div
         v-if="mirrorFloat"
