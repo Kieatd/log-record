@@ -1794,7 +1794,117 @@ export async function setStayAwake(
   };
 }
 
-/** 打开无线调试：让手机在 5555 端口监听，之后就能拔线了 */
+/* ---------------- 手机占用（投屏时显示） ---------------- */
+
+export interface PhoneStats {
+  ok: boolean;
+  message?: string;
+  /** CPU 占用 0-100；第一次采样没有对比样本，返回 null */
+  cpu: number | null;
+  memTotalKb: number;
+  memUsedKb: number;
+  memPct: number | null;
+  tempC: number | null;
+  gpuCurMhz: number | null;
+  gpuMaxMhz: number | null;
+}
+
+/** 上一次 /proc/stat 的样本（CPU 占用要靠两次采样做差），按 serial 分开存 */
+const statSamples = new Map<string, { total: number; idle: number }>();
+
+/**
+ * 读一次手机占用：CPU / 内存 / 温度 / GPU 频率。
+ *
+ * 一次 adb shell 全部取回（省得每 2 秒开好几个 adb 进程）；每行带前缀，顺序无关，
+ * 某台手机没有的节点就留空（例如没有 thermal 的机型）。
+ *
+ * 关于 GPU：这台 Kirin(Mali-T83x) 的 ROM 不暴露 GPU 占用百分比 —— 既没有
+ * utilization 节点、也没有 mali debugfs，所以 GPU 用「当前/最高频率」表示负载：
+ * 负载上来时 mali_ondemand 会把频率抬上去。
+ */
+export async function readPhoneStats(
+  file: string,
+  serial?: string,
+): Promise<PhoneStats> {
+  const cmd = [
+    'echo "CPU $(head -1 /proc/stat)"',
+    'echo "MEMTOTAL $(grep ^MemTotal: /proc/meminfo | cut -d: -f2)"',
+    'echo "MEMAVAIL $(grep ^MemAvailable: /proc/meminfo | cut -d: -f2)"',
+    'echo "TEMP $(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)"',
+    'echo "GPUCUR $(cat /sys/class/devfreq/gpufreq/cur_freq 2>/dev/null)"',
+    'echo "GPUMAX $(cat /sys/class/devfreq/gpufreq/max_freq 2>/dev/null)"',
+  ].join('; ');
+  const args = ['shell', cmd];
+  if (serial) args.unshift('-s', serial);
+  const res = await runAdb(file, args, { timeout: 8000 });
+  const out = String(res.stdout || '');
+
+  const empty: PhoneStats = {
+    ok: false,
+    cpu: null,
+    memTotalKb: 0,
+    memUsedKb: 0,
+    memPct: null,
+    tempC: null,
+    gpuCurMhz: null,
+    gpuMaxMhz: null,
+  };
+  if (!out.trim()) {
+    return { ...empty, message: (res.stderr || '').trim() || '读不到手机状态' };
+  }
+
+  const lines = out.split(/\r?\n/);
+  const line = (name: string) =>
+    lines
+      .find((l) => l.startsWith(`${name} `))
+      ?.slice(name.length + 1)
+      .trim() || '';
+  const num = (name: string) => Number(line(name).match(/(\d+)/)?.[1] || 0);
+
+  // CPU：和上一次采样做差。两次之间总时间没变（或这是第一次）就算不出来
+  let cpu: number | null = null;
+  const cpuNums = line('CPU')
+    .split(/\s+/)
+    .filter((x) => x !== '' && x !== 'cpu')
+    .map((x) => Number(x))
+    .filter((x) => Number.isFinite(x));
+  if (cpuNums.length >= 4) {
+    const total = cpuNums.reduce((a, b) => a + b, 0);
+    const idle = cpuNums[3] + (cpuNums[4] || 0); // idle + iowait
+    const key = serial || 'default';
+    const prev = statSamples.get(key);
+    statSamples.set(key, { total, idle });
+    if (prev && total > prev.total) {
+      const busy = 1 - (idle - prev.idle) / (total - prev.total);
+      cpu = Math.max(0, Math.min(100, busy * 100));
+    }
+  }
+
+  const memTotalKb = num('MEMTOTAL');
+  const memAvailKb = num('MEMAVAIL');
+  const memUsedKb = memTotalKb && memAvailKb ? memTotalKb - memAvailKb : 0;
+  const memPct = memTotalKb ? (memUsedKb / memTotalKb) * 100 : null;
+
+  const tempRaw = num('TEMP');
+  const tempC = tempRaw > 0 ? tempRaw / 1000 : null;
+
+  const mhz = (name: string) => {
+    const v = num(name);
+    return v > 0 ? Math.round(v / 1_000_000) : null;
+  };
+
+  return {
+    ok: true,
+    cpu,
+    memTotalKb,
+    memUsedKb,
+    memPct,
+    tempC,
+    gpuCurMhz: mhz('GPUCUR'),
+    gpuMaxMhz: mhz('GPUMAX'),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* 手动指定的路径持久化                                                */
 /* ------------------------------------------------------------------ */

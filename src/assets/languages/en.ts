@@ -171,6 +171,8 @@ export default {
   '没拿到文件路径，请用「点击选择」': 'Could not read the file path — use "click to pick" instead',
   '没有检测到设备，检查数据线和手机上的「允许 USB 调试」': 'No device detected — check the cable and "Allow USB debugging" on the phone',
   '没检测到设备。插上数据线，手机弹「允许 USB 调试」时点允许': 'No device detected. Plug in the cable and tap "Allow USB debugging" on the phone.',
+  内存: 'Memory',
+  温度: 'Temp',
   '没有可用的设备：插上数据线，选中一台设备': 'No usable device — plug in the cable and pick one',
   '设备还没就绪，过会儿再点「开始投屏」': 'The device is not ready yet — try “Start mirroring” again in a moment',
   '检测到手机插着（{name}），但它没把「ADB 调试」交给电脑':

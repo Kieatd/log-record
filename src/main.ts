@@ -48,6 +48,7 @@ import {
   getInstallConfirm,
   setInstallConfirm,
   readInstallTimes,
+  readPhoneStats,
   restartApp,
   readInstalledAppLabels,
   resolveAdb,
@@ -224,6 +225,13 @@ const createWindow = () => {
       message: res.code === 0 ? 'adb 已重启' : raw || 'adb 重启失败',
       raw,
     };
+  });
+
+  /** 投屏时显示的手机占用：CPU / 内存 / 温度 / GPU 频率（一次 shell 全取回） */
+  ipcMain.handle('adb:phoneStats', async (_, payload: { serial?: string }) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+    return readPhoneStats(info.file, payload.serial);
   });
 
   /**

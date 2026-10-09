@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   DesktopOutlined,
@@ -31,6 +31,84 @@ const canvasRef = ref<HTMLCanvasElement | null>(null);
 const running = ref(false);
 const starting = ref(false);
 const errorText = ref('');
+
+/**
+ * 投屏时显示的手机占用。
+ * CPU 要两次 /proc/stat 采样做差，所以第一次是 null（显示成 —）。
+ * GPU 用「当前/最高频率」表示负载：这台 ROM 不暴露 GPU 占用百分比。
+ */
+interface PhoneStats {
+  cpu: number | null;
+  memTotalKb: number;
+  memUsedKb: number;
+  memPct: number | null;
+  tempC: number | null;
+  gpuCurMhz: number | null;
+  gpuMaxMhz: number | null;
+}
+const stats = ref<PhoneStats | null>(null);
+let statsTimer: ReturnType<typeof setInterval> | null = null;
+const STATS_MS = 2000;
+
+async function readStats() {
+  if (!api.adbPhoneStats) return;
+  try {
+    const res = await api.adbPhoneStats(props.serial || undefined);
+    stats.value = res?.ok ? res : null;
+  } catch {
+    stats.value = null;
+  }
+}
+
+function startStats() {
+  if (statsTimer) return;
+  void readStats();
+  statsTimer = setInterval(() => void readStats(), STATS_MS);
+}
+
+function stopStats() {
+  if (statsTimer) clearInterval(statsTimer);
+  statsTimer = null;
+  stats.value = null;
+}
+
+/** 顶部那一条的内容（CPU / 内存 / GPU / 温度） */
+const statItems = computed(() => {
+  const s = stats.value;
+  if (!s) return [];
+  const gb = (kb: number) => (kb / 1024 / 1024).toFixed(1);
+  const items: { key: string; label: string; value: string }[] = [
+    {
+      key: 'cpu',
+      label: 'CPU',
+      value: s.cpu === null ? '—' : `${s.cpu.toFixed(0)}%`,
+    },
+    {
+      key: 'mem',
+      label: i18n.t('内存'),
+      value:
+        s.memPct === null
+          ? '—'
+          : `${gb(s.memUsedKb)} / ${gb(s.memTotalKb)}G（${s.memPct.toFixed(0)}%）`,
+    },
+    {
+      key: 'gpu',
+      label: 'GPU',
+      value:
+        s.gpuCurMhz === null
+          ? '—'
+          : `${s.gpuCurMhz}${s.gpuMaxMhz ? `/${s.gpuMaxMhz}` : ''} MHz`,
+    },
+  ];
+  if (s.tempC !== null) {
+    items.push({
+      key: 'temp',
+      label: i18n.t('温度'),
+      value: `${s.tempC.toFixed(0)}°C`,
+    });
+  }
+  return items;
+});
 const meta = ref<{ width: number; height: number } | null>(null);
 const fps = ref(0);
 const packetKb = ref(0);
@@ -588,6 +666,9 @@ let offPacket: (() => void) | null = null;
 // 把「正在启动」也告诉父组件，磁贴的开关要显示 loading
 watch(starting, (v) => emit('starting', v));
 
+// 只在投屏过程中读手机占用（没投的时候没必要打扰手机）
+watch(running, (v) => (v ? startStats() : stopStats()));
+
 onMounted(() => {
   if (api.onScrcpyMeta) {
     api.onScrcpyMeta((m: any) => {
@@ -621,6 +702,7 @@ onMounted(() => {
 onUnmounted(() => {
   detachMouse();
   offPacket?.();
+  stopStats();
   stop();
 });
 
@@ -671,6 +753,21 @@ defineExpose({ stop, start });
           @click="stop()"
         />
       </a-tooltip>
+    </div>
+
+    <!-- 手机占用：投屏画面上方一条（只在投屏时显示） -->
+    <div
+      v-if="statItems.length"
+      class="sv-stats"
+    >
+      <span
+        v-for="it in statItems"
+        :key="it.key"
+        class="sv-stat"
+      >
+        <span class="sv-stat-label">{{ it.label }}</span>
+        <span class="sv-stat-value">{{ it.value }}</span>
+      </span>
     </div>
 
     <div class="sv-body">
@@ -804,6 +901,32 @@ defineExpose({ stop, start });
 .sv-icon-stop:hover {
   color: #ff7875;
 }
+/* 手机占用条：深色，和面板一致 */
+.sv-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  background-color: #262626;
+  border-bottom: 1px solid #333;
+  font-size: 11px;
+}
+.sv-stat {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.sv-stat-label {
+  margin-right: 4px;
+  color: #777;
+}
+.sv-stat-value {
+  color: #ddd;
+  font-family: Menlo, Consolas, monospace;
+}
+
 .sv-body {
   position: relative;
   flex: 1;
