@@ -171,6 +171,13 @@ export default {
   '没拿到文件路径，请用「点击选择」': 'Could not read the file path — use "click to pick" instead',
   '没有检测到设备，检查数据线和手机上的「允许 USB 调试」': 'No device detected — check the cable and "Allow USB debugging" on the phone',
   '没检测到设备。插上数据线，手机弹「允许 USB 调试」时点允许': 'No device detected. Plug in the cable and tap "Allow USB debugging" on the phone.',
+  投屏已在独立浮窗中: 'Mirroring is in a separate window',
+  召回浮窗: 'Recall the window',
+  置顶: 'Always on top',
+  取消置顶: 'Stop keeping on top',
+  还原到主窗口: 'Back into the main window',
+  '变成独立浮窗（可拖到屏幕任何地方）':
+    'Open as a separate window (draggable anywhere)',
   投屏已变成浮窗: 'Mirroring is in a floating window',
   投屏浮窗: 'Mirror window',
   '变成浮窗（可拖动）': 'Turn into a floating window (draggable)',

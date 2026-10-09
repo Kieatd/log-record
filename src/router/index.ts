@@ -22,6 +22,12 @@ const router = createRouter({
       path: '/adb',
       name: 'adb',
       component: () => import('../pages/adb/adb-index.vue')
+    },
+    {
+      // 独立投屏浮窗（真窗口）：只渲染投屏面板，没有导航栏/菜单栏
+      path: '/float',
+      name: 'float',
+      component: () => import('../pages/adb/mirror-window.vue')
     }
   ]
 })

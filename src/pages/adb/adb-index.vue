@@ -185,125 +185,28 @@ const mirrorRef = ref<{
   stop: () => Promise<void>;
 } | null>(null);
 
-/* ---------------- 投屏浮窗 ---------------- */
+/* ---------------- 投屏浮窗（开一个真窗口，能拖到桌面任何地方） ---------------- */
 
-const FLOAT_KEY = 'Log Record$$mirrorFloat';
-const FLOAT_POS_KEY = 'Log Record$$mirrorFloatPos';
-const FLOAT_SIZE_KEY = 'Log Record$$mirrorFloatSize';
-const FLOAT_MIN_W = 220;
-const FLOAT_MIN_H = 320;
-/** 默认大小：手机是竖屏，和右侧面板一样 340 宽差不多正好 */
-const FLOAT_DEFAULT = { w: 340, h: 620 };
-
-function readFloatJson<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return (JSON.parse(raw) as T) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-const mirrorFloat = ref(localStorage.getItem(FLOAT_KEY) === '1');
-const floatSize = ref(
-  readFloatJson(FLOAT_SIZE_KEY, { w: FLOAT_DEFAULT.w, h: FLOAT_DEFAULT.h }),
-);
-const floatPos = ref(
-  readFloatJson(FLOAT_POS_KEY, {
-    x: Math.max(8, window.innerWidth - FLOAT_DEFAULT.w - 24),
-    y: 80,
-  }),
-);
-
-/** 停靠时那一列（用来量「变成浮窗前」的实际大小） */
+/** 停靠时那一列：用来量「浮窗前那块区域」的实际大小，开窗时按它定尺寸 */
 const dockRef = ref<HTMLElement | null>(null);
+/** 浮窗（独立窗口）是否开着 —— 开着时这一列显示提示，投屏在浮窗里 */
+const mirrorInWindow = ref(false);
 
-/**
- * 把浮窗大小对齐成「变成浮窗前那块区域」的实际大小。
- * 以前用固定默认值(340×620)，比页面里那块区域矮一截，看起来像变小了。
- */
-function syncFloatSizeToDock() {
-  const el = dockRef.value;
-  if (!el) return;
-  const r = el.getBoundingClientRect();
-  if (r.width > 0 && r.height > 0) {
-    floatSize.value = { w: Math.round(r.width), h: Math.round(r.height) };
-  }
+/** 点面板右上角的浮窗图标：开独立窗口（置顶、可拖到屏幕任何地方） */
+async function openMirrorFloat() {
+  if (!api.openMirrorWindow) return;
+  const r = dockRef.value?.getBoundingClientRect();
+  await api.openMirrorWindow({
+    serial: currentSerial.value,
+    width: r ? Math.round(r.width) : undefined,
+    height: r ? Math.round(r.height) : undefined,
+  });
+  mirrorInWindow.value = true;
 }
 
-const floatStyle = computed(() => ({
-  left: `${floatPos.value.x}px`,
-  top: `${floatPos.value.y}px`,
-  width: `${floatSize.value.w}px`,
-  height: `${floatSize.value.h}px`,
-}));
-
-/** 别让浮窗跑到屏幕外面去（至少留标题栏可见） */
-function clampFloatIntoView() {
-  const maxX = Math.max(8, window.innerWidth - floatSize.value.w - 8);
-  const maxY = Math.max(8, window.innerHeight - 48);
-  floatPos.value = {
-    x: Math.min(Math.max(8, floatPos.value.x), maxX),
-    y: Math.min(Math.max(8, floatPos.value.y), maxY),
-  };
-}
-
-function saveFloatLayout() {
-  localStorage.setItem(FLOAT_POS_KEY, JSON.stringify(floatPos.value));
-  localStorage.setItem(FLOAT_SIZE_KEY, JSON.stringify(floatSize.value));
-}
-
-watch(mirrorFloat, (v) => {
-  localStorage.setItem(FLOAT_KEY, v ? '1' : '0');
-  if (!v) return;
-  // 大小 = 变成浮窗前那块区域的大小（原地弹出，尺寸不变）
-  syncFloatSizeToDock();
-  clampFloatIntoView();
-  saveFloatLayout();
-});
-
-/** 拖标题栏移动（用 window 上的 pointermove，鼠标滑出浮窗也不丢） */
-function startFloatDrag(e: PointerEvent) {
-  if (e.button !== 0) return;
-  e.preventDefault();
-  const sx = e.clientX;
-  const sy = e.clientY;
-  const { x, y } = floatPos.value;
-  const onMove = (ev: PointerEvent) => {
-    floatPos.value = { x: x + ev.clientX - sx, y: y + ev.clientY - sy };
-  };
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    clampFloatIntoView();
-    saveFloatLayout();
-  };
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
-}
-
-/** 拖右下角缩放 */
-function startFloatResize(e: PointerEvent) {
-  if (e.button !== 0) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const sx = e.clientX;
-  const sy = e.clientY;
-  const { w, h } = floatSize.value;
-  const onMove = (ev: PointerEvent) => {
-    floatSize.value = {
-      w: Math.max(FLOAT_MIN_W, w + ev.clientX - sx),
-      h: Math.max(FLOAT_MIN_H, h + ev.clientY - sy),
-    };
-  };
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    saveFloatLayout();
-  };
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
+/** 把浮窗收回来（关掉那个窗口，投屏回到右侧面板） */
+async function recallMirrorFloat() {
+  await api.closeMirrorWindow?.();
 }
 
 const stayAwake = ref<StayAwakeState | null>(null);
@@ -1795,12 +1698,13 @@ onMounted(async () => {
   localIp.value = await api.getIPAddress();
   await loadDevices();
   startDevicePoll(); // 插线/拔线自己长出来，不用手点「重新扫描」
-  // 上次退出时是浮窗状态：等布局出来再按那一列的实际大小对齐
-  if (mirrorFloat.value) {
-    await nextTick();
-    syncFloatSizeToDock();
-    clampFloatIntoView();
-  }
+  // 浮窗是独立窗口：刷新/重开后对一下状态，并监听它被关掉
+  mirrorInWindow.value = !!(await api.isMirrorWindowOpen?.());
+  api.onMirrorWindowClosed?.((payload: { wasRunning?: boolean } = {}) => {
+    mirrorInWindow.value = false;
+    // 浮窗里本来在投：关掉后接着在右侧面板里投，省一次手点
+    if (payload?.wasRunning) void retryMirror();
+  });
   // 这两个都各自要跑几次 adb，串着等会让页面半天才可交互 —— 并行发出去
   loadStayAwake();
   loadInstallConfirm();
@@ -3045,68 +2949,37 @@ function deviceSubtitle(d: AdbDevice) {
       ref="dockRef"
       class="adb-side"
     >
-      <!-- 浮窗时这一列照旧留着（不改变原有布局），只在中间给个提示和还原入口 -->
+      <!-- 浮窗开着时：这一列照旧占位，中间给提示和召回入口 -->
       <div
-        v-if="mirrorFloat"
+        v-if="mirrorInWindow"
         class="mirror-docked-hint"
       >
         <ExportOutlined class="mirror-docked-icon" />
-        <div>{{ $t('投屏已变成浮窗') }}</div>
+        <div>{{ $t('投屏已在独立浮窗中') }}</div>
         <a-button
           size="small"
-          @click="mirrorFloat = false"
+          @click="recallMirrorFloat"
         >
           <ImportOutlined />
-          {{ $t('还原到右侧面板') }}
+          {{ $t('召回浮窗') }}
         </a-button>
       </div>
-      <!-- 同一个组件实例：浮窗只是把 DOM 搬到 body 上，解码器不重建、流不断 -->
-      <Teleport
-        :disabled="!mirrorFloat"
-        to="body"
-      >
-        <div
-          class="mirror-float"
-          :class="{ 'mirror-float-on': mirrorFloat }"
-          :style="mirrorFloat ? floatStyle : undefined"
-        >
-          <div
-            v-if="mirrorFloat"
-            class="mirror-float-bar"
-            @pointerdown="startFloatDrag"
-          >
-            <span class="mirror-float-title">{{ $t('投屏浮窗') }}</span>
-            <a-tooltip :title="$t('还原到右侧面板')">
-              <a-button
-                size="small"
-                type="text"
-                @click="mirrorFloat = false"
-              >
-                <ImportOutlined />
-              </a-button>
-            </a-tooltip>
-          </div>
-          <ScrcpyView
-            ref="mirrorRef"
-            :serial="currentSerial"
-            :float="mirrorFloat"
-            @retry="retryMirror"
-            @float="mirrorFloat = !mirrorFloat"
-            @log="(t: string) => pushLog(t)"
-            @running="
-              (v: boolean) => {
-                mirrorRunning = v;
-                if (!v) void loadDevices();
-              }
-            "
-          />
-          <div
-            v-if="mirrorFloat"
-            class="mirror-float-resize"
-            @pointerdown="startFloatResize"
-          />
-        </div>
-      </Teleport>
+      <!-- 用 v-show 藏起来而不是 v-if：卸载会 stop 掉投屏会话 -->
+      <ScrcpyView
+        v-show="!mirrorInWindow"
+        ref="mirrorRef"
+        :serial="currentSerial"
+        :float="mirrorInWindow"
+        @retry="retryMirror"
+        @float="openMirrorFloat"
+        @log="(t: string) => pushLog(t)"
+        @running="
+          (v: boolean) => {
+            mirrorRunning = v;
+            if (!v) void loadDevices();
+          }
+        "
+      />
     </div>
   </div>
 </template>
@@ -3144,7 +3017,7 @@ function deviceSubtitle(d: AdbDevice) {
   min-height: 0;
 }
 
-/* 浮窗时右侧这一列照旧占位（DOM 被 Teleport 搬到 body 上了，这里只放提示） */
+/* 浮窗（独立窗口）开着时，右侧这一列照旧占位，中间只放提示 */
 .mirror-docked-hint {
   display: flex;
   flex-direction: column;
@@ -3162,62 +3035,6 @@ function deviceSubtitle(d: AdbDevice) {
 .mirror-docked-icon {
   font-size: 26px;
   color: #ccc;
-}
-
-.mirror-float {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-/* 浮窗：固定定位 + 置顶（z-index 低于 antd 弹层 1000，弹窗照常盖住它） */
-.mirror-float-on {
-  position: fixed;
-  z-index: 900;
-  background: #1e1e1e;
-  border: 1px solid #444;
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
-  overflow: hidden;
-}
-
-/* 浮窗里的投屏面板：去掉自己的边框圆角，铺满整个浮窗 */
-.mirror-float-on :deep(.scrcpy-view) {
-  flex: 1;
-  min-height: 0;
-  border: 0;
-  border-radius: 0;
-}
-
-.mirror-float-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  padding: 2px 4px 2px 10px;
-  background: #2a2a2a;
-  color: #ccc;
-  font-size: 12px;
-  cursor: move;
-  user-select: none;
-}
-
-.mirror-float-title {
-  flex: 1;
-}
-
-.mirror-float-resize {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 16px;
-  height: 16px;
-  cursor: nwse-resize;
-  background: linear-gradient(
-    135deg,
-    rgb(255 255 255 / 0%) 50%,
-    rgb(255 255 255 / 45%) 50%
-  );
 }
 
 /* ---- adb 状态行 ---- */

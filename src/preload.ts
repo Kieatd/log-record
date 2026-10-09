@@ -125,6 +125,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('push:progress', (_e, v) => callback(v)),
 
   /* ---------------- scrcpy 投屏 / 操控 ---------------- */
+  /* ---------------- 独立投屏浮窗（真窗口，能拖到桌面任何地方） ---------------- */
+  openMirrorWindow: (payload: {
+    serial?: string;
+    width?: number;
+    height?: number;
+  }) => ipcRenderer.invoke('mirror:openWindow', payload),
+  closeMirrorWindow: () => ipcRenderer.invoke('mirror:closeWindow'),
+  isMirrorWindowOpen: () => ipcRenderer.invoke('mirror:isOpen'),
+  setMirrorAlwaysOnTop: (on: boolean) =>
+    ipcRenderer.invoke('mirror:setOnTop', on),
+  relayMirrorLog: (text: string) => ipcRenderer.invoke('mirror:relayLog', text),
+  setMirrorWindowRunning: (running: boolean) =>
+    ipcRenderer.invoke('mirror:setRunning', running),
+  onMirrorWindowClosed: (
+    callback: (payload: { wasRunning: boolean }) => void,
+  ) => ipcRenderer.on('mirror:windowClosed', (_e, v) => callback(v)),
+
   scrcpyStatus: () => ipcRenderer.invoke('scrcpy:status'),
   scrcpyStart: (
     serial?: string,

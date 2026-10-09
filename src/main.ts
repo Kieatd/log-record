@@ -33,7 +33,11 @@ import {
   getIPAddressInfo,
   getIPAddressList,
 } from './utils/node-strings';
-import { loadWindowState, saveWindowState } from './utils/window-state';
+import {
+  isBoundsVisible,
+  loadWindowState,
+  saveWindowState,
+} from './utils/window-state';
 import { scanUsbPhones } from './utils/usb-scan';
 import {
   pullFromPhone,
@@ -586,6 +590,158 @@ const createWindow = () => {
     ? path.join(process.resourcesPath, 'scrcpy-server.bin')
     : path.join(app.getAppPath(), 'resources', 'scrcpy-server.bin');
 
+  /* ---------------- 独立投屏浮窗（真窗口：能拖到桌面任何地方） ---------------- */
+
+  let mirrorWindow: BrowserWindow | null = null;
+  /** 浮窗里投屏是否在跑（召回时用来自动接着投） */
+  let mirrorWindowRunning = false;
+  const mirrorStateFile = path.join(
+    app.getPath('userData'),
+    'mirror-window.json',
+  );
+
+  /** 投屏数据包发到哪儿：浮窗开着就发浮窗，否则发主窗口 */
+  function mirrorTarget(): Electron.WebContents {
+    if (mirrorWindow && !mirrorWindow.isDestroyed()) {
+      return mirrorWindow.webContents;
+    }
+    return mainWindow.webContents;
+  }
+
+  function loadMirrorBounds(): {
+    x?: number;
+    y?: number;
+    width: number;
+    height: number;
+  } {
+    try {
+      const b = JSON.parse(fs.readFileSync(mirrorStateFile, 'utf-8'));
+      if (b && Number.isFinite(b.width) && Number.isFinite(b.height)) {
+        const width = Math.max(240, Math.round(b.width));
+        const height = Math.max(320, Math.round(b.height));
+        const onScreen = isBoundsVisible(
+          { x: b.x, y: b.y, width, height },
+          screen.getAllDisplays(),
+        );
+        if (onScreen) {
+          return { x: Math.round(b.x), y: Math.round(b.y), width, height };
+        }
+        return { width, height };
+      }
+    } catch {
+      /* 第一次打开：还没有存档 */
+    }
+    // 默认就是主窗口里那块面板的大小（手机竖屏）
+    return { width: 340, height: 620 };
+  }
+
+  function saveMirrorBounds(bounds: Electron.Rectangle) {
+    try {
+      fs.writeFileSync(mirrorStateFile, JSON.stringify(bounds), 'utf-8');
+    } catch (err) {
+      console.warn('保存投屏浮窗位置失败', err);
+    }
+  }
+
+  /** 开浮窗；已经开着就把它拉到前面（不重复开） */
+  async function openMirrorWindow(payload: {
+    serial?: string;
+    width?: number;
+    height?: number;
+  }): Promise<{ ok: boolean }> {
+    if (mirrorWindow && !mirrorWindow.isDestroyed()) {
+      mirrorWindow.show();
+      mirrorWindow.focus();
+      return { ok: true };
+    }
+    const saved = loadMirrorBounds();
+    const width = Math.max(240, Math.round(payload.width || saved.width));
+    const height = Math.max(320, Math.round(payload.height || saved.height));
+    mirrorWindow = new BrowserWindow({
+      width,
+      height,
+      x: saved.x,
+      y: saved.y,
+      minWidth: 240,
+      minHeight: 320,
+      frame: false, // 无边框：顶上那条拖动栏是自己画的
+      title: 'Log Record 投屏浮窗',
+      alwaysOnTop: true, // 可以盖在别的软件上面
+      skipTaskbar: false,
+      resizable: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        spellcheck: false,
+        // 和主窗口同理：拖动/触摸采样靠定时器，被节流就算不出滑动
+        backgroundThrottling: false,
+      },
+    });
+
+    const save = () => {
+      if (mirrorWindow && !mirrorWindow.isDestroyed()) {
+        saveMirrorBounds(mirrorWindow.getBounds());
+      }
+    };
+    mirrorWindow.on('move', save);
+    mirrorWindow.on('resize', save);
+    mirrorWindow.on('closed', () => {
+      mirrorWindow = null;
+      const wasRunning = mirrorWindowRunning;
+      mirrorWindowRunning = false;
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('mirror:windowClosed', { wasRunning });
+      }
+    });
+
+    // 同一个渲染入口，用 hash 路由区分（#/float）
+    const hash = `/float?serial=${encodeURIComponent(payload.serial || '')}`;
+    if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+      await mirrorWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}#${hash}`);
+    } else {
+      await mirrorWindow.loadFile(
+        path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+        { hash },
+      );
+    }
+    return { ok: true };
+  }
+
+  ipcMain.handle(
+    'mirror:openWindow',
+    (_, payload: { serial?: string; width?: number; height?: number }) =>
+      openMirrorWindow(payload || {}),
+  );
+  ipcMain.handle('mirror:closeWindow', () => {
+    if (mirrorWindow && !mirrorWindow.isDestroyed()) {
+      mirrorWindow.close();
+    }
+    return { ok: true };
+  });
+  ipcMain.handle(
+    'mirror:isOpen',
+    () => !!mirrorWindow && !mirrorWindow.isDestroyed(),
+  );
+  ipcMain.handle('mirror:setOnTop', (_, on: boolean) => {
+    if (mirrorWindow && !mirrorWindow.isDestroyed()) {
+      // 'floating' 层级：能盖住普通窗口，但不至于盖住系统对话框
+      mirrorWindow.setAlwaysOnTop(!!on, 'floating');
+    }
+    return !!on;
+  });
+  /** 浮窗里的 scrcpy 日志转发回主窗口的输出面板 */
+  ipcMain.handle('mirror:relayLog', (_, text: string) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('adb:output', { text: String(text || '') });
+    }
+    return true;
+  });
+
+  /** 浮窗自己报告投屏是否在跑（召回时决定要不要自动接着投） */
+  ipcMain.handle('mirror:setRunning', (_, running: boolean) => {
+    mirrorWindowRunning = !!running;
+    return true;
+  });
+
   ipcMain.handle('scrcpy:status', () => ({
     running: isScrcpyRunning(),
     serverFile: scrcpyServerFile,
@@ -612,20 +768,20 @@ const createWindow = () => {
         maxFps: payload?.maxFps ?? 30,
         videoBitRate: payload?.videoBitRate ?? 4_000_000,
         onMeta: (meta) => {
-          mainWindow.webContents.send('scrcpy:meta', meta);
+          mirrorTarget().send('scrcpy:meta', meta);
         },
         onPacket: (packet) => {
           // 视频包直接转给渲染进程解码（H.264 裸流，WebCodecs 解）
-          mainWindow.webContents.send('scrcpy:packet', packet);
+          mirrorTarget().send('scrcpy:packet', packet);
         },
         onLog: (line) => {
-          mainWindow.webContents.send('scrcpy:log', line);
+          mirrorTarget().send('scrcpy:log', line);
         },
         onError: (message) => {
-          mainWindow.webContents.send('scrcpy:error', message);
+          mirrorTarget().send('scrcpy:error', message);
         },
         onClose: (reason) => {
-          mainWindow.webContents.send('scrcpy:closed', reason);
+          mirrorTarget().send('scrcpy:closed', reason);
         },
       });
     },

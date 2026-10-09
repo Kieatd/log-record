@@ -22,19 +22,29 @@ window.electronAPI.onGetNetworkMsg((msg) => {
 onMounted(() => {
   appStore.updateCheck()
 })
+
+/**
+ * 独立投屏浮窗（#/float）：只渲染投屏面板，不要导航栏/菜单栏。
+ * 这是单独的一个窗口，用同一个渲染入口、靠 hash 区分。
+ */
+const isFloatWindow = window.location.hash.startsWith('#/float');
 </script>
 
 <template>
   <div class="container">
-    <NavBar />
-    <div class="body">
-      <MenuBar />
-      <router-view v-slot="{ Component }">
-        <keep-alive>
-          <component :is="Component" />
-        </keep-alive>
-      </router-view>
-    </div>
+    <!-- 投屏浮窗：整窗就是投屏面板 -->
+    <router-view v-if="isFloatWindow" />
+    <template v-else>
+      <NavBar />
+      <div class="body">
+        <MenuBar />
+        <router-view v-slot="{ Component }">
+          <keep-alive>
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
+      </div>
+    </template>
   </div>
 </template>
 
