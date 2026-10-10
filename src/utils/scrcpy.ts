@@ -433,18 +433,36 @@ export async function injectKey(payload: {
  */
 const TEXT_CHUNK = 300;
 
+/**
+ * 纯 ASCII（可打印）才走「按键注入」这条路。
+ *
+ * 为什么中文不能走 injectText：scrcpy 的 injectText 是靠 KeyCharacterMap 把字符
+ * 映射成按键事件再注入的，中文/表情没有对应按键 → 注不进去（实测：手机里什么都没出现，
+ * 还可能让手机卡一下）。含非 ASCII 时改用「写进手机剪贴板 + 让手机自己粘贴」。
+ */
+const ASCII_ONLY = /^[\x20-\x7E\r\n\t]*$/;
+
 export async function injectText(text: string): Promise<{ ok: boolean; message?: string }> {
   const writer = session?.client.controller;
   if (!writer) return { ok: false, message: '投屏没在跑' };
   try {
     const str = String(text ?? '');
     if (!str) return { ok: true };
-    for (let i = 0; i < str.length; i += TEXT_CHUNK) {
-      await writer.injectText(str.slice(i, i + TEXT_CHUNK));
-      // 分片之间喘口气，手机那边的注入是异步的
-      if (i + TEXT_CHUNK < str.length) {
-        await new Promise((r) => setTimeout(r, 30));
+    if (ASCII_ONLY.test(str)) {
+      // 英文/数字/符号：按键注入（手机上会"一个字符一个字符"打出来）
+      for (let i = 0; i < str.length; i += TEXT_CHUNK) {
+        await writer.injectText(str.slice(i, i + TEXT_CHUNK));
+        if (i + TEXT_CHUNK < str.length) {
+          await new Promise((r) => setTimeout(r, 30));
+        }
       }
+    } else {
+      // 含中文等非 ASCII：按键注入做不到（没有对应按键），
+      // 交给 paste-text.ts 那条 uiautomator 通道（写手机剪贴板 + 发粘贴键）
+      return {
+        ok: false,
+        message: '含中/日/韩等字符，需走「粘贴」通道（粘贴会写进手机剪贴板再触发粘贴）',
+      };
     }
     return { ok: true };
   } catch (err) {

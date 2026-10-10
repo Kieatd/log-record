@@ -13,7 +13,10 @@ const config: ForgeConfig = {
     asar: true,
     // asar 里只放 Vite 的产物，二进制得单独带出来。
     // 打包后落在 Contents/Resources/ 下，运行时用 process.resourcesPath 找
-    extraResource: ['./resources/scrcpy-server.bin'],
+    extraResource: [
+      './resources/scrcpy-server.bin',
+      './resources/lr-textsetter.jar',
+    ],
   },
   rebuildConfig: {},
   makers: [

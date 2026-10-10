@@ -171,6 +171,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scrcpyKey: (keyCode: number, action?: 'down' | 'up' | 'both') =>
     ipcRenderer.invoke('scrcpy:key', { keyCode, action }),
   scrcpyText: (text: string) => ipcRenderer.invoke('scrcpy:text', text),
+  /** 把文字粘贴进手机当前输入框（支持中文；走 uiautomator） */
+  pasteText: (text: string) => ipcRenderer.invoke('adb:pasteText', text),
   /** 读电脑剪贴板（投屏时输入到手机） */
   readClipboard: () => ipcRenderer.invoke('clipboard:readText'),
   scrcpyPower: (on: boolean) => ipcRenderer.invoke('scrcpy:power', on),

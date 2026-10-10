@@ -40,6 +40,7 @@ import {
   saveWindowState,
 } from './utils/window-state';
 import { scanUsbPhones } from './utils/usb-scan';
+import { pasteTextToPhone } from './utils/paste-text';
 import {
   pullFromPhone,
   cancelInstall,
@@ -585,6 +586,11 @@ const createWindow = () => {
 
   /* ---------------- scrcpy 投屏 / 操控 ---------------- */
 
+  /** uiautomator 粘贴脚本（把电脑文字粘进手机用），和 scrcpy-server 一样随包带出来 */
+  const pasteJarFile = app.isPackaged
+    ? path.join(process.resourcesPath, 'lr-textsetter.jar')
+    : path.join(app.getAppPath(), 'resources', 'lr-textsetter.jar');
+
   // scrcpy-server 随应用打包。asar 里只有 Vite 产物，二进制是用
   // forge 的 extraResource 单独带出去的，所以打包后要去 resourcesPath 找。
   const scrcpyServerFile = app.isPackaged
@@ -797,6 +803,20 @@ const createWindow = () => {
   ipcMain.handle('scrcpy:touch', (_, payload: any) => injectTouch(payload));
   ipcMain.handle('scrcpy:scroll', (_, payload: any) => injectScroll(payload));
   ipcMain.handle('scrcpy:key', (_, payload: any) => injectKey(payload));
+  /** 把电脑上的文字粘贴进手机（走 uiautomator：写手机剪贴板 + 发粘贴键） */
+  ipcMain.handle('adb:pasteText', async (_, text: string) => {
+    const info = currentAdb();
+    if (!info.found) return { ok: false, message: info.error || '没找到 adb' };
+    const res = await pasteTextToPhone(
+      info.file,
+      pasteJarFile,
+      text,
+      undefined,
+    );
+    console.log('[pasteText] 结果', JSON.stringify(res));
+    return res;
+  });
+
   ipcMain.handle('scrcpy:text', (_, text: string) => injectText(text));
   /** 读电脑的剪贴板（投屏时把电脑复制的内容输入到手机） */
   ipcMain.handle('clipboard:readText', () => {

@@ -90,12 +90,27 @@ function onClipOpenChange(v: boolean) {
 }
 
 /** 把一段文字输入到手机（走 scrcpy 控制通道；长文本在 main 里分片） */
+/** 纯 ASCII（可打印）—— 这种可以用 scrcpy 的按键注入，中文不行 */
+const ASCII_ONLY_RE = /^[\x20-\x7E\r\n\t]*$/;
+
 async function sendTextToPhone(text: string) {
   const str = String(text ?? '');
   if (!str.trim()) return;
   clipSending.value = true;
   try {
-    const res = await api.scrcpyText(str);
+    // 短的纯英文/数字：直接用 scrcpy 打字（快、光标处插入）
+    // 含中文等：走 uiautomator 粘贴（写手机剪贴板 + 发粘贴键，任何字符都行）
+    const asciiShort = ASCII_ONLY_RE.test(str) && str.length <= 80;
+    let res: { ok?: boolean; message?: string } | null | undefined;
+    if (asciiShort) {
+      res = await api.scrcpyText(str);
+    } else {
+      res = await api.pasteText?.(str);
+      // 粘贴通道失败、但内容全是 ASCII：退回打字
+      if (!res?.ok && ASCII_ONLY_RE.test(str)) {
+        res = await api.scrcpyText(str);
+      }
+    }
     if (res?.ok) {
       message.success(i18n.t('已输入到手机'));
       emit('log', `已输入到手机（${str.length} 字）`);
@@ -788,13 +803,25 @@ function onGlobalKeyDown(e: KeyboardEvent) {
   const el = e.target as HTMLElement | null;
   const tag = String(el?.tagName || '').toLowerCase();
   if (tag === 'input' || tag === 'textarea' || el?.isContentEditable) return;
-  if (!running.value) return;
+  // preventDefault 必须同步调（await 之后再调就来不及了）
   e.preventDefault();
-  void pasteFromClipboard();
+  if (running.value) {
+    void pasteFromClipboard();
+    return;
+  }
+  // 主窗口和浮窗是两个独立窗口，各自只知道自己那份 ScrcpyView 的状态。
+  // 焦点在「没在投屏的那个窗口」时也不能失灵 —— 所以问一下主进程有没有会话。
+  void (async () => {
+    const st = await api.scrcpyStatus?.().catch(() => null);
+    if (st?.running) await pasteFromClipboard();
+  })();
 }
 
 function onKeyDown(e: KeyboardEvent) {
   if (!running.value) return;
+  // 带修饰键的快捷键不往手机发（Cmd/Ctrl+V 是"粘贴电脑剪贴板"，已单独处理；
+  // 不拦的话画布会把 v 当普通字符发过去 —— 之前就是这样只出来一个 v）
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   const code = KEY_MAP[e.key];
   if (code !== undefined) {
     e.preventDefault();
