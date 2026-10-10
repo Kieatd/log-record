@@ -15,6 +15,8 @@
 import { runAdb } from './adb';
 
 const JAR_REMOTE = '/data/local/tmp/lr-textsetter.jar';
+/** 本次运行是否已经推过脚本（手机上重启会清掉，失败时会重置） */
+let jarPushed = false;
 const B64_REMOTE = '/data/local/tmp/lr-text.b64';
 const RESULT_REMOTE = '/sdcard/lr-result.txt';
 
@@ -28,42 +30,52 @@ export async function pasteTextToPhone(
   const b64 = Buffer.from(String(text ?? ''), 'utf8').toString('base64');
   if (!b64) return { ok: false, message: '没有要粘贴的内容' };
 
-  // ① 推脚本（1.6KB，很快）
-  const push = await runAdb(adbFile, [...base, 'push', jarPath, JAR_REMOTE], {
-    timeout: 15000,
-  });
-  if (push.code !== 0) {
-    return {
-      ok: false,
-      message: `推粘贴脚本失败：${(push.stderr || push.stdout || '').trim()}`,
-    };
+  /**
+   * 推脚本（2.9KB）。本次运行推过就不再推 —— 每次推要多花 ~40ms，
+   * 而且粘贴的耗时大头是下面的 uiautomator 启动（实测 2.5 秒）。
+   */
+  if (!jarPushed) {
+    const push = await runAdb(adbFile, [...base, 'push', jarPath, JAR_REMOTE], {
+      timeout: 15000,
+    });
+    if (push.code !== 0) {
+      return {
+        ok: false,
+        message: `推粘贴脚本失败：${(push.stderr || push.stdout || '').trim()}`,
+      };
+    }
+    jarPushed = true;
   }
 
-  // ② 写 base64 + 清掉上次的结果（纯 ASCII，不用怕转义）
-  await runAdb(
-    adbFile,
-    [...base, 'shell', `echo ${b64} > ${B64_REMOTE}; rm -f ${RESULT_REMOTE}`],
-    { timeout: 10000 },
-  );
+  /**
+   * 写文本 + 跑 uiautomator + 读结果，串成一条 shell ——
+   * 三次 adb 调用变一次（每次调用都要起一个 adb 进程，实测各 ~60-90ms）。
+   */
+  const shellCmd =
+    `echo ${b64} > ${B64_REMOTE}; rm -f ${RESULT_REMOTE}; ` +
+    `uiautomator runtest ${JAR_REMOTE} -c com.logrecord.paste.TextPaster ` +
+    `>/dev/null 2>&1; cat ${RESULT_REMOTE} 2>/dev/null`;
+  const run = await runAdb(adbFile, [...base, 'shell', shellCmd], {
+    timeout: 30000,
+  });
+  let out = String(run.stdout || '').trim();
 
-  // ③ 跑（uiautomator 启动要 1～2 秒）
-  const run = await runAdb(
-    adbFile,
-    [
-      ...base,
-      'shell',
-      `uiautomator runtest ${JAR_REMOTE} -c com.logrecord.paste.TextPaster`,
-    ],
-    { timeout: 30000 },
-  );
-
-  // ④ 读结果
-  const res = await runAdb(
-    adbFile,
-    [...base, 'shell', `cat ${RESULT_REMOTE} 2>/dev/null`],
-    { timeout: 10000 },
-  );
-  const out = String(res.stdout || '').trim();
+  // 手机上脚本可能被清了（比如重启过）→ 重推一次再来
+  if (!out) {
+    jarPushed = false;
+    const repush = await runAdb(
+      adbFile,
+      [...base, 'push', jarPath, JAR_REMOTE],
+      { timeout: 15000 },
+    );
+    if (repush.code === 0) {
+      jarPushed = true;
+      const again = await runAdb(adbFile, [...base, 'shell', shellCmd], {
+        timeout: 30000,
+      });
+      out = String(again.stdout || '').trim();
+    }
+  }
   if (out.startsWith('OK_NOT_FIELD')) {
     // 粘贴键发出去了，但当时聚焦的看起来不是输入框 —— 大概率没粘上
     return {
